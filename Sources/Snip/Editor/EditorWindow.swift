@@ -10,6 +10,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private let canvas: CanvasView
     private let shareAnchor = AnchorBox()
     private var copyTask: Task<Void, Never>?
+    /// The snip as first saved, and the "(marked up)" file kept next to it once there's markup.
+    private let originalURL: URL?
+    private var markupURL: URL?
 
     /// `replacing`: the frame of the editor this snip takes over from; the new window opens with
     /// the same top-left corner instead of centred.
@@ -25,6 +28,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
     init(doc: EditorDocument) {
         self.doc = doc
+        originalURL = doc.fileURL
         canvas = CanvasView(doc: doc)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
@@ -88,12 +92,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     /// Closes this editor because a newer snip takes its place (as in Snipping Tool). Markup that
     /// was never saved is kept next to the original as "<name> (marked up).png". Returns the frame.
     func retire() -> NSRect? {
-        if doc.hasUnsavedMarkup, let image = doc.render(), let data = image.pngData(scale: doc.scale) {
-            let folder = doc.fileURL?.deletingLastPathComponent() ?? Prefs.snipFolder
-            let base = doc.fileURL?.deletingPathExtension().lastPathComponent ?? "Snip"
-            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try? data.write(to: folder.appendingPathComponent("\(base) (marked up).png"))
-        }
+        if doc.hasUnsavedMarkup { _ = keepMarkup() }
         let frame = window?.frame
         window?.close()
         return frame
@@ -136,6 +135,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
                     try data?.write(to: url)
                     self.doc.fileURL = url
                     self.doc.markSaved()
+                    self.markupURL = nil
                     self.window?.title = url.deletingPathExtension().lastPathComponent
                     self.doc.flash("Saved")
                 } catch {
@@ -171,8 +171,29 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    /// Writes the snip with its markup next to the original as "<name> (marked up).png" (one file,
+    /// rewritten each time, so no pile of copies). Returns it, or nil if it couldn't be written.
+    private func keepMarkup() -> URL? {
+        guard let image = doc.render(), let data = image.pngData(scale: doc.scale) else { return nil }
+        let url = markupURL ?? originalURL.map {
+            $0.deletingLastPathComponent().appendingPathComponent("\($0.deletingPathExtension().lastPathComponent) (marked up).png")
+        } ?? FileNamer.url(in: Prefs.snipFolder, prefix: "Snip", ext: "png")
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            doc.markSaved()
+            markupURL = url
+            return url
+        } catch {
+            return nil
+        }
+    }
+
+    /// Shows the snip's file in Finder, ready to drag anywhere. Markup is written first, so the file
+    /// shown is what's on screen.
     private func showInFinder() {
-        if let url = doc.fileURL, FileManager.default.fileExists(atPath: url.path) {
+        let url = doc.hasUnsavedMarkup ? keepMarkup() : (markupURL ?? doc.fileURL)
+        if let url, FileManager.default.fileExists(atPath: url.path) {
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } else {
             try? FileManager.default.createDirectory(at: Prefs.snipFolder, withIntermediateDirectories: true)
@@ -295,7 +316,8 @@ struct EditorToolbar: View {
 
                 Divider().frame(height: 20).padding(.horizontal, 2)
 
-                IconButton(icon: "square.and.arrow.down", help: "Save as (⌘S)", action: actions.save)
+                // Snips are already saved: show the file so it can be dragged anywhere (no copies).
+                IconButton(icon: "folder", help: "Show in Finder (⌘S): it's already saved, drag it anywhere", label: "Show File", action: actions.showInFinder)
                     .keyboardShortcut(doc.isEditingText ? nil : KeyboardShortcut("s"))
 
                 Button(action: actions.copy) {
@@ -310,7 +332,7 @@ struct EditorToolbar: View {
 
                 Menu {
                     Button { actions.copyText() } label: { Label("Copy all text", systemImage: "text.viewfinder") }
-                    Button { actions.showInFinder() } label: { Label("Show in Finder", systemImage: "folder") }
+                    Button { actions.save() } label: { Label("Save As…", systemImage: "square.and.arrow.down") }
                     Divider()
                     Button("Settings…") { SettingsWindow.show() }
                 } label: {

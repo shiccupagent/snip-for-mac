@@ -45,13 +45,13 @@ You can change both shortcuts in **Settings**.
 Every **New** button opens the bar in picture mode; press 🎥 on the bar to record instead (or use ⌥⇧R).
 
 **Editor** (same layout as Snipping Tool):
-- Top row: **＋ New**, 📷/🎥 (snip or record), mode, delay, then Undo / Redo, Save, **Copy**, Share, and ⋯ (copy all text, show in Finder).
+- Top row: **＋ New**, 📷/🎥 (snip or record), mode, delay, then Undo / Redo, **Show File**, **Copy**, Share, and ⋯ (copy all text, Save As).
 - Markup row: Pen, Highlighter, Eraser, Shapes (arrow, line, rectangle, oval), Text, Redact (pixelate), Crop, Copy text.
 - Click a tool that's already selected to change its color and size.
 - Hold **Shift** for straight lines, 45° angles and perfect squares.
-- Every edit is copied to the clipboard automatically. ⌘C, ⌘S, ⌘Z and ⇧⌘Z work as usual.
+- Every edit is copied to the clipboard automatically. ⌘C, ⌘Z and ⇧⌘Z work as usual; ⌘S shows the file.
 
-**Recordings** save to `~/Movies/Snips`. The video window has **Copy** (paste the video into Messages, Slack or Mail), Save, Share, and **GIF**, which makes a GIF and copies it.
+**Recordings** save to `~/Movies/Snips`. Everything is saved as you go, with no Save step: **Show File** opens Finder with the file selected, ready to drag into YouTube, Discord or anywhere, without making copies. The video window also has **Copy** (paste the video into Messages, Slack or Mail), Share, and **GIF**, which makes a GIF and copies it.
 
 Snips save to `~/Pictures/Snips`.
 

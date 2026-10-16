@@ -63,7 +63,6 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
             // Opens the bar in picture mode like every other New; its 🎥 button switches to recording.
             onNew: { CaptureCoordinator.shared.begin(.snip) },
             onCopy: { [weak self] in self?.copy() },
-            onSave: { [weak self] in self?.saveAs() },
             onShare: { [weak self] in self?.share() },
             onGIF: { [weak self] in self?.makeGIF() },
             onEditTimer: { [weak self] in self?.editTimer() },
@@ -112,25 +111,6 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
     private func copy() {
         Clipboard.copyFile(model.url)
         flash("Copied — paste it into any chat or email")
-    }
-
-    private func saveAs() {
-        guard let window else { return }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.mpeg4Movie]
-        panel.nameFieldStringValue = model.url.lastPathComponent
-        panel.beginSheetModal(for: window) { [weak self] response in
-            MainActor.assumeIsolated {
-                guard let self, response == .OK, let dest = panel.url else { return }
-                do {
-                    if FileManager.default.fileExists(atPath: dest.path) { try FileManager.default.removeItem(at: dest) }
-                    try FileManager.default.copyItem(at: self.model.url, to: dest)
-                    self.flash("Saved")
-                } catch {
-                    NSAlert(error: error).runModal()
-                }
-            }
-        }
     }
 
     private func share() {
@@ -233,7 +213,6 @@ private struct VideoBar: View {
     let shareAnchor: AnchorBox
     let onNew: () -> Void
     let onCopy: () -> Void
-    let onSave: () -> Void
     let onShare: () -> Void
     let onGIF: () -> Void
     let onEditTimer: () -> Void
@@ -251,7 +230,8 @@ private struct VideoBar: View {
                     .padding(.leading, 6)
             }
             Spacer(minLength: 12)
-            IconButton(icon: "square.and.arrow.down", help: "Save as", action: onSave)
+            // Recordings are already saved: show the file so it can be dragged anywhere (no copies).
+            IconButton(icon: "folder", help: "Show in Finder (⌘S): it's already saved, drag it anywhere", label: "Show File", action: onReveal)
                 .keyboardShortcut("s")
             Button(action: onCopy) { Label("Copy", systemImage: "doc.on.doc") }
                 .buttonStyle(FilledButtonStyle())
@@ -265,7 +245,6 @@ private struct VideoBar: View {
                 IconButton(icon: "flag.checkered", help: "Edit the speedrun timer: game, split names and split times", label: "Edit Timer", action: onEditTimer)
                     .disabled(model.busy)
             }
-            IconButton(icon: "folder", help: "Show in Finder", action: onReveal)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)

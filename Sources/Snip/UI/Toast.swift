@@ -45,6 +45,7 @@ final class Toast {
             onOpen: { [weak self] in self?.openEditor() },
             onCopy: { [weak self] in self?.copy() },
             onSave: { [weak self] in self?.saveAs() },
+            onReveal: { [weak self] in self?.reveal() },
             onClose: { [weak self] in self?.close(animated: true) },
             onHover: { [weak self] hovering in self?.hoverChanged(hovering) }
         )
@@ -91,6 +92,11 @@ final class Toast {
         Clipboard.copy(image, scale: scale)
     }
 
+    private func reveal() {
+        if let fileURL { NSWorkspace.shared.activateFileViewerSelecting([fileURL]) }
+        close(animated: true)
+    }
+
     private func saveAs() {
         dismissTask?.cancel()
         NSApp.activate(ignoringOtherApps: true)
@@ -134,6 +140,7 @@ private struct ToastView: View {
     let onOpen: () -> Void
     let onCopy: () -> Void
     let onSave: () -> Void
+    let onReveal: () -> Void
     let onClose: () -> Void
     let onHover: (Bool) -> Void
 
@@ -154,7 +161,12 @@ private struct ToastView: View {
                         Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
                     }
                     .buttonStyle(FilledButtonStyle())
-                    IconButton(icon: "square.and.arrow.down", help: "Save as…", label: "Save", action: onSave)
+                    if savedToFolder {
+                        // Already saved: show the file so it can be dragged anywhere (no copies).
+                        IconButton(icon: "folder", help: "Show in Finder: it's already saved, drag it anywhere", label: "Show File", action: onReveal)
+                    } else {
+                        IconButton(icon: "square.and.arrow.down", help: "Save as…", label: "Save", action: onSave)
+                    }
                 }
                 .padding(.top, 5)
             }
