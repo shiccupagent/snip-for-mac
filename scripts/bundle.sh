@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 BUILD_NUMBER="${BUILD_NUMBER:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}"
-VERSION="${VERSION:-1.0.$BUILD_NUMBER}"
+VERSION="${VERSION:-1.1.$BUILD_NUMBER}"
 BIN="${BIN:-.build/apple/Products/Release/Snip}"
 [ -f "$BIN" ] || BIN=.build/release/Snip
 IDENTITY="${SIGN_IDENTITY:--}"
