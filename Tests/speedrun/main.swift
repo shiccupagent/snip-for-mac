@@ -80,6 +80,20 @@ MainActor.assumeIsolated {
     let replay2 = RunReplay(log: fixed)
     replay2.advance(to: 11.5); check(replay2.timer.times.map { $0 } == [3, 7, 8] && replay2.timer.phase == .ended, "edited log replays")
 
+    // Renaming on the timer mid-run keeps the attempt going and is saved.
+    var clockNow = 0.0
+    var renamed: Splits?
+    let named = SpeedrunTimer(splits: Splits(game: "G", category: "Any%", segments: [Segment(name: "A"), Segment(name: "B")])) { clockNow }
+    named.onSplitsChanged = { renamed = $0 }
+    named.split(); clockNow = 2; named.split()
+    named.rename(.segment(1), to: "Boss"); named.rename(.game, to: "My Game")
+    check(named.phase == .running && named.index == 1 && named.times.first == 2, "rename keeps the run going")
+    check(renamed?.segments[1].name == "Boss" && renamed?.game == "My Game", "rename is saved")
+    let renameLog = RunLogBuilder()
+    renameLog.record(.start, splits: named.splits, at: 0)
+    renameLog.rename(0, to: "Intro")
+    check(renameLog.runs[0].segments[0].name == "Intro", "rename reaches the run log")
+
     print(failures == 0 ? "ALL PASS" : "\(failures) FAILED")
     exit(failures == 0 ? 0 : 1)
 }

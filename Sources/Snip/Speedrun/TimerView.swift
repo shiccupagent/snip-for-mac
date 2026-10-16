@@ -28,10 +28,34 @@ enum SplitColors {
     }
 }
 
+/// Which name on the on-screen timer is being typed over, and where each editable name sits.
+@MainActor
+final class TimerEditing: ObservableObject {
+    @Published var field: SplitsField?
+    @Published var text = ""
+    /// Each editable name's area, in the timer's coordinates (origin top-left).
+    var targets: [SplitsField: CGRect] = [:]
+
+    func target(at point: CGPoint) -> SplitsField? {
+        targets.first { $0.value.contains(point) }?.key
+    }
+}
+
+private struct NameFramesKey: PreferenceKey {
+    static var defaultValue: [SplitsField: CGRect] = [:]
+    static func reduce(value: inout [SplitsField: CGRect], nextValue: () -> [SplitsField: CGRect]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
 struct TimerView: View {
     @ObservedObject var timer: SpeedrunTimer
     /// False when drawn as a still picture (each frame of a recording).
     var live = true
+    /// On screen only: lets a double-clicked name be typed over (nil: names are plain text).
+    var editing: TimerEditing? = nil
+    /// Ends an edit: the new name, or nil when cancelled.
+    var commit: (SplitsField, String?) -> Void = { _, _ in }
 
     static let width: CGFloat = 260
     private let rowHeight: CGFloat = 24
@@ -57,6 +81,25 @@ struct TimerView: View {
         .frame(width: Self.width)
         .background(LinearGradient(colors: [SplitColors.backgroundTop, SplitColors.backgroundBottom], startPoint: .top, endPoint: .bottom))
         .environment(\.colorScheme, .dark)
+        .coordinateSpace(name: "timer")
+        .onPreferenceChange(NameFramesKey.self) { [editing] frames in MainActor.assumeIsolated { editing?.targets = frames } }
+    }
+
+    /// A name that becomes a text field while it's being edited.
+    @ViewBuilder
+    private func name(_ field: SplitsField, _ shown: String) -> some View {
+        if let editing {
+            EditableName(field: field, shown: shown, editing: editing) { commit(field, $0) }
+        } else {
+            Text(shown)
+        }
+    }
+
+    /// Reports where an editable name sits, so a double-click there can find it.
+    private func editTarget(_ field: SplitsField) -> some View {
+        GeometryReader { g in
+            Color.clear.preference(key: NameFramesKey.self, value: [field: g.frame(in: .named("timer"))])
+        }
     }
 
     private var separator: some View {
@@ -65,12 +108,17 @@ struct TimerView: View {
 
     private var title: some View {
         VStack(spacing: 0) {
-            Text(timer.splits.game.isEmpty ? "Untitled" : timer.splits.game)
+            name(.game, timer.splits.game.isEmpty ? "Untitled" : timer.splits.game)
                 .font(.system(size: 14, weight: .regular))
-            Text(timer.splits.category)
+                .frame(maxWidth: .infinity)
+                .background(editTarget(.game))
+            name(.category, timer.splits.category)
                 .font(.system(size: 14))
+                .frame(maxWidth: .infinity, minHeight: 17)
+                .background(editTarget(.category))
         }
         .lineLimit(1)
+        .multilineTextAlignment(.center)
         .foregroundStyle(SplitColors.text)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 5)
@@ -123,9 +171,10 @@ struct TimerView: View {
         let time = done ? SpeedrunFormat.time(timer.times[i]) : SpeedrunFormat.time(segment.pbSplit)
 
         return HStack(spacing: 4) {
-            Text(segment.name)
+            name(.segment(i), segment.name)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .background(editTarget(.segment(i)))
             Text(deltaText)
                 .foregroundStyle(deltaColor)
                 .frame(width: 58, alignment: .trailing)
@@ -163,5 +212,32 @@ struct TimerView: View {
         .foregroundStyle(SplitColors.text)
         .padding(.horizontal, 6)
         .frame(height: rowHeight)
+    }
+}
+
+/// A name on the timer: plain text, or a text field while it's being edited (Enter saves, Esc cancels).
+private struct EditableName: View {
+    let field: SplitsField
+    let shown: String
+    @ObservedObject var editing: TimerEditing
+    /// The new name, or nil when cancelled.
+    let commit: (String?) -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        if editing.field == field {
+            TextField("", text: $editing.text)
+                .textFieldStyle(.plain)
+                .focused($focused)
+                .onAppear { DispatchQueue.main.async { focused = true } }
+                .onSubmit { commit(editing.text) }
+                .onExitCommand { commit(nil) }
+                .onChange(of: focused) { _, now in if !now { commit(editing.text) } }
+                .padding(.horizontal, 3)
+                .background(RoundedRectangle(cornerRadius: 3).fill(Color.black.opacity(0.45)))
+                .overlay(RoundedRectangle(cornerRadius: 3).stroke(SplitColors.currentTop, lineWidth: 1))
+        } else {
+            Text(shown)
+        }
     }
 }

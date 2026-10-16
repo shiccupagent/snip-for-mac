@@ -91,6 +91,12 @@ final class RunLogBuilder {
         }
     }
 
+    /// A split renamed during the attempt being logged.
+    func rename(_ i: Int, to name: String) {
+        guard !runs.isEmpty, runs[runs.count - 1].reset == nil, runs[runs.count - 1].segments.indices.contains(i) else { return }
+        runs[runs.count - 1].segments[i].name = name
+    }
+
     /// Ends the log at the end of the video; a run still going stays open.
     func finish(at videoTime: Double) {
         closePause(at: videoTime)

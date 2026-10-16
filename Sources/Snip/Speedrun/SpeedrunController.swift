@@ -16,7 +16,11 @@ final class SpeedrunController: ObservableObject {
     let recordingOverlay = TimerOverlay()
     /// Whether the timer is visible on screen (it's in the recording either way).
     @Published private(set) var onScreen = Prefs.speedrunOnScreen
-    private var panel: NSPanel?
+    private var panel: TimerPanel?
+    /// The name being typed over on the timer, if any.
+    private let editing = TimerEditing()
+    /// The app that had the keyboard before an edit, given it back afterwards.
+    private var keyboardOwner: NSRunningApplication?
     private var active = false
     private var region: CGRect = .zero
     private var overlayTicker: Timer?
@@ -54,6 +58,7 @@ final class SpeedrunController: ObservableObject {
     /// Hides the timer; an attempt still running is reset so its golds are kept.
     func hide() {
         guard active else { return }
+        endEdit(nil)
         active = false
         panel?.orderOut(nil)
         stopOverlay()
@@ -66,6 +71,7 @@ final class SpeedrunController: ObservableObject {
         onScreen = visible
         Prefs.speedrunOnScreen = visible
         guard active, let panel else { return }
+        if !visible { endEdit(nil) }
         if visible { panel.orderFrontRegardless() } else { panel.orderOut(nil) }
     }
 
@@ -103,19 +109,69 @@ final class SpeedrunController: ObservableObject {
         panel.setFrame(NSRect(x: panel.frame.minX, y: top - size.height, width: size.width, height: size.height), display: true)
     }
 
-    private func makePanel() -> NSPanel {
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: TimerView.width, height: 300),
+    // MARK: Editing names on the timer
+
+    /// Double-click on the game, category or a split name: type over it in place.
+    fileprivate func beginEdit(_ field: SplitsField) {
+        guard let panel else { return }
+        endEdit(editing.text)
+        switch field {
+        case .game: editing.text = timer.splits.game
+        case .category: editing.text = timer.splits.category
+        case .segment(let i):
+            guard timer.splits.segments.indices.contains(i) else { return }
+            editing.text = timer.splits.segments[i].name
+        }
+        // The timer never takes the keyboard from the game, except while a name is being typed.
+        let front = NSWorkspace.shared.frontmostApplication
+        keyboardOwner = front?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? nil : front
+        panel.allowsKey = true
+        panel.makeKeyAndOrderFront(nil)
+        editing.field = field
+    }
+
+    /// Saves the typed name (nil: cancel) and gives the keyboard back.
+    fileprivate func endEdit(_ name: String?) {
+        guard let field = editing.field else { return }
+        editing.field = nil
+        if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines) {
+            switch field {
+            case .segment(let i):
+                // A split needs a name; the game and category may be blank.
+                if !name.isEmpty {
+                    timer.rename(field, to: name)
+                    log?.rename(i, to: name)
+                }
+            case .game, .category:
+                timer.rename(field, to: name)
+            }
+        }
+        if let panel {
+            panel.allowsKey = false
+            panel.resignKey()
+        }
+        keyboardOwner?.activate()
+        keyboardOwner = nil
+    }
+
+    fileprivate var isEditing: Bool { editing.field != nil }
+
+    private func makePanel() -> TimerPanel {
+        let panel = TimerPanel(contentRect: NSRect(x: 0, y: 0, width: TimerView.width, height: 300),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = .statusBar
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        panel.isMovableByWindowBackground = true
+        panel.isMovableByWindowBackground = false
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        let host = TimerHostingView(rootView: TimerView(timer: timer))
+        let host = TimerHostingView(rootView: TimerView(timer: timer, editing: editing) { _, name in
+            MainActor.assumeIsolated { SpeedrunController.shared.endEdit(name) }
+        })
         host.menuProvider = { [weak self] in self?.contextMenu() ?? NSMenu() }
+        host.editing = editing
         panel.contentView = host
         return panel
     }
@@ -171,6 +227,7 @@ final class SpeedrunController: ObservableObject {
         add("Reset", Prefs.speedrunShortcut(.reset).display) { [timer] in timer.reset() }
         menu.addItem(.separator())
         add("Hide on Screen (Still Recorded)", Prefs.speedrunShortcut(.visibility).display) { [weak self] in self?.setOnScreen(false) }
+        add("Rename Game") { [weak self] in self?.beginEdit(.game) }
         add("Edit Splits…") { SplitsEditorWindow.show() }
         add("Open Splits…") { [weak self] in self?.openSplits() }
         add("Save Splits As…") { [weak self] in self?.saveSplitsAs() }
@@ -309,13 +366,33 @@ enum SpeedrunKeys {
     }
 }
 
-/// Hosts the timer: drags move the window, right-click opens the LiveSplit-style menu, and clicks
-/// never take focus from the game.
+/// The timer's window. It only takes the keyboard while a name on it is being typed.
+final class TimerPanel: NSPanel {
+    var allowsKey = false
+    override var canBecomeKey: Bool { allowsKey }
+}
+
+/// Hosts the timer: drags move the window, double-clicking a name edits it, right-click opens the
+/// LiveSplit-style menu, and clicks never take focus from the game.
 private final class TimerHostingView: NSHostingView<TimerView> {
     var menuProvider: (() -> NSMenu)?
+    var editing: TimerEditing?
 
-    override var mouseDownCanMoveWindow: Bool { true }
+    override var mouseDownCanMoveWindow: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        let controller = SpeedrunController.shared
+        // A click off the name being edited saves it (clicks in its text field never reach here).
+        if controller.isEditing { controller.endEdit(editing?.text) }
+        let p = convert(event.locationInWindow, from: nil)
+        let point = CGPoint(x: p.x, y: isFlipped ? p.y : bounds.height - p.y)
+        if event.clickCount == 2, let field = editing?.target(at: point) {
+            controller.beginEdit(field)
+        } else {
+            window?.performDrag(with: event)
+        }
+    }
 
     override func menu(for event: NSEvent) -> NSMenu? { menuProvider?() }
 

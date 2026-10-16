@@ -57,7 +57,7 @@ Snips save to `~/Pictures/Snips`.
 
 **Speedrun timer (LiveSplit, built in):** on the record bar, set a delay and a 🏁 **Splits** button appears next to it. Turn it on and a LiveSplit-style timer (same colors and layout) sits in the top-right corner of the recorded area. It starts the moment the recording starts.
 - Split keys work while your game has focus: **Num 1** split, **Num 2** skip, **Num 3** reset, **Num 5** pause, **Num 8** undo. Change them in Settings → Speedrun timer.
-- ✏️ next to 🏁 edits the game, category and split names. Right-click the timer for Open/Save Splits (LiveSplit `.lss` files, so splits move freely between Snip and LiveSplit).
+- Double-click the game, category or any split name on the timer to rename it in place (Enter saves, Esc cancels), even mid-run. ✏️ next to 🏁 opens the full splits editor. Right-click the timer for Open/Save Splits (LiveSplit `.lss` files, so splits move freely between Snip and LiveSplit).
 - 👁 (or **Num 9**) hides the timer on your screen while you play, even mid-run. It's always drawn into the recording either way.
 - **Let an AI fix your splits:** each speedrun recording also saves a copy without the timer and a `.speedrun.json` with every split's video time. Claude, Gemini or any AI with a terminal can scrub the video, correct the times, and run `snip speedrun render` to redraw the timer. See [docs/SPEEDRUN-AI.md](docs/SPEEDRUN-AI.md).
 - Personal bests and best segments are saved when a run resets or the recording stops. Splits live in `~/Library/Application Support/Snip/Splits/`.

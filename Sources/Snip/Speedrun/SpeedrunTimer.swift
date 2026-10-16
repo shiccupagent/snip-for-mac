@@ -2,6 +2,11 @@ import Foundation
 
 /// The speedrun clock and its splits, with LiveSplit's controls and rules: Split (also starts and
 /// resumes), Undo, Skip, Pause and Reset. Personal bests and golds are saved when a run is reset.
+/// A name on the timer that can be edited in place.
+enum SplitsField: Hashable {
+    case game, category, segment(Int)
+}
+
 @MainActor
 final class SpeedrunTimer: ObservableObject {
     enum Phase { case idle, running, paused, ended }
@@ -132,6 +137,18 @@ final class SpeedrunTimer: ObservableObject {
         clear()
         onEvent?(.reset)
         replaceSplits(updated)
+    }
+
+    /// Renames the game, the category or one split. Unlike replacing the splits, the attempt keeps going.
+    func rename(_ field: SplitsField, to name: String) {
+        switch field {
+        case .game: splits.game = name
+        case .category: splits.category = name
+        case .segment(let i):
+            guard splits.segments.indices.contains(i) else { return }
+            splits.segments[i].name = name
+        }
+        onSplitsChanged?(splits)
     }
 
     /// New splits from the editor or a file. Any attempt in progress is reset first.
