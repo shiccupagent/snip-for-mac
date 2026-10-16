@@ -42,7 +42,7 @@ snip speedrun render "<recording>.mp4" # redraw the timer from the .speedrun.jso
   "clean_video": "Recording 2026-10-15 at 22.12.32 (no timer).mp4",
   "game": "Test Game", "category": "Any%",
   "offset": 0,
-  "timer": { "x": 532, "y": 8, "scale": 2 },
+  "timer": { "x": 532, "y": 8, "scale": 2, "opacity": 0.8 },
   "runs": [
     {
       "attempt": 5,
@@ -66,5 +66,5 @@ snip speedrun render "<recording>.mp4" # redraw the timer from the .speedrun.jso
 - `pb` / `best`: the comparison (personal-best split times and best segments, in clock seconds) as it was when
   the run started. They colour the deltas; leave them unless asked.
 - `game`, `category` and segment `name`s are drawn on the timer: fix typos here too.
-- `timer`: where the timer sits, top-left in points from the video's top-left; `scale` = video pixels per point.
+- `timer`: where the timer sits, top-left in points from the video's top-left; `scale` = video pixels per point; `opacity` (optional, 0.2–1) how solid it is drawn.
 - Several attempts in one recording are several entries in `runs`.

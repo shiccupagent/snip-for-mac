@@ -62,6 +62,9 @@ right-click a video → Open With → Snip): drag across the thumbnails to scrub
 - drag the yellow ends of the clip to trim it, or press **I** / **O** to trim to the playhead;
 - **Split** (⌘B) at the playhead and **Delete** a piece to cut out the middle; cut-out parts turn dark;
 - **Space** plays (skipping what you cut), **←/→** step a frame, **⇧←/→** a second, **⌘Z** undoes;
+- **zoom in** for frame-exact cuts: pinch on the trackpad or hold ⌘ and scroll over the timeline (it zooms around your
+  pointer), scroll sideways to move along, **⌘=** / **⌘−** / **⌘0** zoom in, out and back to the whole video, or use the
+  zoom slider in the bottom corner;
 - **Save Edit** writes it into the video (the old version goes to the Trash). Speedrun splits show as flags you can
   drag, and the timer follows your cuts.
 
@@ -74,6 +77,7 @@ last recording". Setup and tools: [docs/AI-EDITING.md](docs/AI-EDITING.md).
 **Speedrun timer (LiveSplit, built in):** on the record bar, set a delay and a 🏁 **Splits** button appears next to it. Turn it on and a LiveSplit-style timer (same colors and layout) sits in the top-right corner of the recorded area. It starts the moment the recording starts.
 - Split keys work while your game has focus: **Num 1** split, **Num 2** skip, **Num 3** reset, **Num 5** pause, **Num 8** undo. Change them in Settings → Speedrun timer.
 - Double-click the game, category or any split name on the timer to rename it in place (Enter saves, Esc cancels), even mid-run. ✏️ next to 🏁 opens the full splits editor. Right-click the timer for Open/Save Splits (LiveSplit `.lss` files, so splits move freely between Snip and LiveSplit).
+- **Opacity**: right-click the timer and drag the slider (or Settings → Speedrun timer) to make it see-through, on your screen and in the recording.
 - 👁 (or **Num 9**) hides the timer on your screen while you play, even mid-run. It's always drawn into the recording either way.
 - **Let an AI fix your splits:** each speedrun recording also saves a copy without the timer and a `.speedrun.json` with every split's video time. Claude, Gemini or any AI with a terminal can scrub the video, correct the times, and run `snip speedrun render` to redraw the timer. See [docs/SPEEDRUN-AI.md](docs/SPEEDRUN-AI.md).
 - Personal bests and best segments are saved when a run resets or the recording stops. Splits live in `~/Library/Application Support/Snip/Splits/`.

@@ -300,7 +300,7 @@ final class SpeedrunRenderer {
 
     private func timerImage(at t: Double) -> CGImage? {
         replay.advance(to: t)
-        let renderer = ImageRenderer(content: TimerView(timer: replay.timer, live: false))
+        let renderer = ImageRenderer(content: TimerView(timer: replay.timer, live: false).opacity(log.timer.opacity ?? 1))
         renderer.scale = log.timer.scale
         return renderer.cgImage
     }

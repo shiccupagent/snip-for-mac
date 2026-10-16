@@ -37,6 +37,12 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
     private var seekTarget: Double?
     private var seeking = false
     private var playingWatch: AnyCancellable?
+    private var viewportWatch: AnyCancellable?
+    private var scrollMonitor: Any?
+    private weak var timelineHost: NSView?
+    /// The recording being shown, for making thumbnails as the timeline zooms in.
+    private var thumbnailAsset: AVURLAsset?
+    private var thumbnailTask: Task<Void, Never>?
 
     static func open(url: URL, pointSize: CGSize) {
         let controller = VideoWindowController(url: url, pointSize: pointSize)
@@ -104,6 +110,8 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
             onSave: { [weak self] in self?.saveEdit() }
         ))
 
+        timelineHost = timelineView
+
         let container = NSView()
         for v in [playerView, bar, timelineView] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
@@ -136,14 +144,21 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
         playingWatch = player.publisher(for: \.timeControlStatus).receive(on: RunLoop.main).sink { [weak self] status in
             MainActor.assumeIsolated { self?.playhead.playing = status != .paused }
         }
+        viewportWatch = timeline.$viewport.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.scheduleThumbnails() }
+        }
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify]) { [weak self] event in
+            MainActor.assumeIsolated { self?.scrollTimeline(event) ?? false } ? nil : event
+        }
         Task { await loadTimeline() }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// Development aid (`Snip dev-snapshot <video> <out.png> [--edit]`): draws this window to a PNG
-    /// without ever showing it, optionally with a sample edit, so the timeline can be checked by eye.
-    static func snapshot(url: URL, to out: URL, sampleEdit: Bool) async -> Bool {
+    /// Development aid (`Snip dev-snapshot <video> <out.png> [--edit] [--zoom N]`): draws this window to a
+    /// PNG without ever showing it, optionally with a sample edit and zoomed in, so the timeline can be
+    /// checked by eye.
+    static func snapshot(url: URL, to out: URL, sampleEdit: Bool, zoom: Double? = nil) async -> Bool {
         let controller = VideoWindowController(url: url, pointSize: CGSize(width: 1100, height: 520))
         guard let window = controller.window else { return false }
         window.alphaValue = 0
@@ -160,7 +175,11 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
             controller.timeline.removeSelected(or: d * 0.36)
             controller.timeline.selected = controller.timeline.edit.piece(at: d * 0.6)
             controller.playhead.time = d * 0.55
-            controller.playhead.hover = d * 0.78
+            controller.playhead.hover = d * 0.6
+        }
+        if let zoom {
+            controller.timeline.setZoom(zoom, keeping: controller.timeline.duration * 0.55, at: 0.5)
+            try? await Task.sleep(for: .seconds(3))
         }
         try? await Task.sleep(for: .milliseconds(600))
         defer { window.close() }
@@ -196,7 +215,16 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         timeObserver = nil
         playingWatch = nil
+        viewportWatch = nil
+        thumbnailTask?.cancel()
+        if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) }
+        scrollMonitor = nil
         VideoWindowController.openControllers.removeAll { $0 === self }
+    }
+
+    /// A wider window shows more thumbnail tiles.
+    func windowDidResize(_ notification: Notification) {
+        scheduleThumbnails()
     }
 
     private func flash(_ message: String) {
@@ -224,24 +252,79 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
         let asset = AVURLAsset(url: model.url)
         let duration = (try? await asset.load(.duration).seconds) ?? 0
         let log = model.hasTimer ? try? RunLog.load(RunLog.url(for: model.url)) : nil
+        thumbnailTask?.cancel()
+        thumbnailAsset = asset
         timeline.load(duration: duration.isFinite ? duration : 0, log: log)
-        timeline.setThumbnails([])
-        guard duration.isFinite, duration > 0 else { return }
+        scheduleThumbnails(after: .zero)
+    }
+
+    /// Makes thumbnails for the part of the video in view once zooming or scrolling pauses, so a
+    /// pinch never waits on a backlog of frames. Until they arrive, the nearest ones stand in.
+    private func scheduleThumbnails(after delay: Duration = .milliseconds(150)) {
+        thumbnailTask?.cancel()
+        thumbnailTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            await self?.loadThumbnails()
+        }
+    }
+
+    private func loadThumbnails() async {
+        guard let asset = thumbnailAsset, timeline.duration > 0 else { return }
+        let width = (timelineHost?.bounds.width ?? window?.contentView?.bounds.width ?? 900) - 2 * VideoTimelineView.sidePadding
+        let (times, tolerance) = timeline.missingThumbnails(tiles: timeline.tileCount(width: max(width, 100)))
+        guard !times.isEmpty else { return }
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 240, height: 240)
-        generator.requestedTimeToleranceBefore = CMTime(seconds: 1, preferredTimescale: 600)
-        generator.requestedTimeToleranceAfter = CMTime(seconds: 1, preferredTimescale: 600)
-        let count = 30
-        var images: [CGImage] = []
-        for k in 0..<count {
-            let time = CMTime(seconds: duration * (Double(k) + 0.5) / Double(count), preferredTimescale: 600)
-            if let result = try? await generator.image(at: time) { images.append(result.image) }
+        // Close enough to land in its own tile, and no closer: exact frames are slower to decode.
+        let slack = CMTime(seconds: min(tolerance, 1), preferredTimescale: 600)
+        generator.requestedTimeToleranceBefore = slack
+        generator.requestedTimeToleranceAfter = slack
+        var batch: [TimelineModel.Thumb] = []
+        for t in times {
+            guard !Task.isCancelled else { break }
+            if let result = try? await generator.image(at: CMTime(seconds: t, preferredTimescale: 600)) {
+                batch.append(.init(time: result.actualTime.seconds, image: result.image))
+            }
+            if batch.count >= 4 {
+                timeline.addThumbnails(batch)
+                batch = []
+            }
         }
-        timeline.setThumbnails(images)
+        timeline.addThumbnails(batch)
+    }
+
+    /// Over the timeline: pinch, or ⌘/⌥ + scroll, zooms around the pointer; scrolling moves along it.
+    /// Returns whether the event was used.
+    private func scrollTimeline(_ event: NSEvent) -> Bool {
+        guard event.window === window, let host = timelineHost, !model.busy, timeline.duration > 0 else { return false }
+        let p = host.convert(event.locationInWindow, from: nil)
+        let width = host.bounds.width - 2 * VideoTimelineView.sidePadding
+        guard host.bounds.contains(p), width > 50 else { return false }
+        let v = timeline.viewport
+        let fraction = Double(min(max((p.x - VideoTimelineView.sidePadding) / width, 0), 1))
+        let pointer = v.start + fraction * v.span
+        if event.type == .magnify {
+            timeline.zoom(by: 1 + Double(event.magnification), keeping: pointer, at: fraction)
+            return true
+        }
+        // A mouse wheel moves in lines, a trackpad in points.
+        let scale = event.hasPreciseScrollingDeltas ? 1.0 : 12.0
+        let dx = Double(event.scrollingDeltaX) * scale, dy = Double(event.scrollingDeltaY) * scale
+        if !event.modifierFlags.intersection([.command, .option]).isEmpty {
+            timeline.zoom(by: exp((abs(dy) >= abs(dx) ? dy : dx) * 0.01), keeping: pointer, at: fraction)
+            return true
+        }
+        guard v.zoom > 1.001 else { return false }
+        timeline.pan(by: -(abs(dx) >= abs(dy) ? dx : dy) / Double(width) * v.span)
+        return true
     }
 
     private func seek(_ t: Double) {
+        // Jumping out of view (the arrow keys, a flag) brings the view along. Dragging stays put.
+        let v = timeline.viewport
+        if t < v.start || t > v.end { timeline.follow(t) }
         seekTarget = t
         if !seeking { seekToTarget() }
     }
@@ -283,7 +366,9 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
         // While scrubbing, the playhead follows the pointer, not the frames still being decoded.
         guard t.isFinite, !seeking, seekTarget == nil else { return }
         playhead.time = t
-        guard player.timeControlStatus != .paused, timeline.edit.isCut else { return }
+        guard player.timeControlStatus != .paused else { return }
+        timeline.follow(t)
+        guard timeline.edit.isCut else { return }
         if let next = timeline.edit.keptTime(atOrAfter: t) {
             if next > t + 0.03 { seek(next) }
         } else {

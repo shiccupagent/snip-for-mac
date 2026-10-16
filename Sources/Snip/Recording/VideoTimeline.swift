@@ -10,8 +10,17 @@ final class TimelineModel: ObservableObject {
     /// The speedrun log with any flags moved (nil: not a speedrun recording).
     @Published private(set) var log: RunLog?
     @Published var selected: Int?
-    @Published private(set) var thumbnails: [CGImage] = []
     @Published private(set) var canUndo = false
+    /// The stretch of video the strip shows (all of it until you zoom in).
+    @Published private(set) var viewport = TimelineViewport(duration: 0)
+    /// Thumbnails so far, by time. More are made for the stretch in view as you zoom in.
+    @Published private(set) var thumbnails: [Thumb] = []
+    private(set) var thumbnailVersion = 0
+
+    struct Thumb {
+        let time: Double
+        let image: CGImage
+    }
 
     private var savedLog: RunLog?
     private var history: [(TimelineEdit, RunLog?)] = []
@@ -22,6 +31,9 @@ final class TimelineModel: ObservableObject {
     /// A fresh timeline for the file as it is now.
     func load(duration: Double, log: RunLog?) {
         edit = TimelineEdit(duration: duration)
+        viewport = TimelineViewport(duration: duration)
+        thumbnails = []
+        thumbnailVersion += 1
         self.log = log
         savedLog = log
         selected = nil
@@ -29,7 +41,71 @@ final class TimelineModel: ObservableObject {
         canUndo = false
     }
 
-    func setThumbnails(_ images: [CGImage]) { thumbnails = images }
+    // MARK: Zoom
+
+    /// Zooms by `factor` (above 1 zooms in), keeping moment `t` at `fraction` across the strip.
+    func zoom(by factor: Double, keeping t: Double, at fraction: Double) {
+        setZoom(viewport.zoom * factor, keeping: t, at: fraction)
+    }
+
+    func setZoom(_ zoom: Double, keeping t: Double, at fraction: Double) {
+        var next = viewport
+        next.setZoom(zoom, keeping: t, at: fraction)
+        if next != viewport { viewport = next }
+    }
+
+    func pan(by seconds: Double) {
+        var next = viewport
+        next.pan(by: seconds)
+        if next != viewport { viewport = next }
+    }
+
+    /// Keeps `t` (the playhead) in view; changes nothing (and redraws nothing) while it already is.
+    func follow(_ t: Double) {
+        var next = viewport
+        next.follow(t)
+        if next != viewport { viewport = next }
+    }
+
+    // MARK: Thumbnails
+
+    func addThumbnails(_ new: [Thumb]) {
+        guard !new.isEmpty else { return }
+        var all = (thumbnails + new).sorted { $0.time < $1.time }
+        // Keep memory bounded: drop the ones farthest from what's in view.
+        if all.count > 600 {
+            let middle = viewport.start + viewport.span / 2
+            all = Array(all.sorted { abs($0.time - middle) < abs($1.time - middle) }.prefix(600)).sorted { $0.time < $1.time }
+        }
+        thumbnails = all
+        thumbnailVersion += 1
+    }
+
+    /// The thumbnail closest to `t`.
+    func thumbnail(near t: Double) -> Thumb? {
+        Self.nearest(t, in: thumbnails)
+    }
+
+    static func nearest(_ t: Double, in thumbs: [Thumb]) -> Thumb? {
+        guard !thumbs.isEmpty else { return nil }
+        var low = 0, high = thumbs.count - 1
+        while low < high {
+            let mid = (low + high) / 2
+            if thumbs[mid].time < t { low = mid + 1 } else { high = mid }
+        }
+        if low > 0, abs(thumbs[low - 1].time - t) < abs(thumbs[low].time - t) { return thumbs[low - 1] }
+        return thumbs[low]
+    }
+
+    /// Moments in view whose tile has no thumbnail close enough, for `tiles` tiles across the strip.
+    func missingThumbnails(tiles: Int) -> (times: [Double], tolerance: Double) {
+        let tileSpan = viewport.span / Double(max(tiles, 1))
+        let times = (0..<max(tiles, 1)).map { viewport.start + (Double($0) + 0.5) * tileSpan }.filter { t in
+            guard let near = thumbnail(near: t) else { return true }
+            return abs(near.time - t) > tileSpan * 0.6
+        }
+        return (times, tileSpan / 2)
+    }
 
     /// Call before each change (once per drag), so Undo steps back to here.
     func checkpoint() {
@@ -154,9 +230,14 @@ struct VideoTimelineView: View {
     let onMute: () -> Void
     let onSave: () -> Void
 
-    private let stripHeight: CGFloat = 56
+    /// Shared with the window, which handles scrolling and pinching over the strip.
+    static let sidePadding: CGFloat = 14
+    static let stripHeight: CGFloat = 56
+
+    private let stripHeight = Self.stripHeight
     private let flagRow: CGFloat = 18
     private let rulerHeight: CGFloat = 16
+    private let overviewHeight: CGFloat = 8
     private let handleWidth: CGFloat = 11
     private let yellow = Color(red: 1, green: 0.8, blue: 0.12)
 
@@ -170,15 +251,18 @@ struct VideoTimelineView: View {
             GeometryReader { g in
                 strip(width: max(g.size.width, 1))
             }
-            .frame(height: flagRow + stripHeight + rulerHeight)
-            Text(model.hint.text)
-                .font(.system(size: 11))
-                .foregroundStyle(model.hint.warning ? Color.orange : Color.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: flagRow + stripHeight + rulerHeight + overviewHeight)
+            HStack(spacing: 10) {
+                Text(model.hint.text)
+                    .font(.system(size: 11))
+                    .foregroundStyle(model.hint.warning ? Color.orange : Color.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                zoomControl
+            }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, Self.sidePadding)
         .padding(.top, 8)
         .padding(.bottom, 9)
         .background(.bar)
@@ -218,7 +302,35 @@ struct VideoTimelineView: View {
         }
     }
 
-    /// Keyboard: Space play, ←/→ a frame (⇧ a second), ⌘B split, Delete cut, I/O trim, ⌘Z undo.
+    /// − slider + under the strip. The slider is logarithmic, so each bit of it zooms by the same factor.
+    private var zoomControl: some View {
+        let maxZoom = model.viewport.maxZoom
+        return HStack(spacing: 2) {
+            IconButton(icon: "minus.magnifyingglass", help: "Zoom out (⌘−)") { zoomStep(1 / 1.6) }
+                .disabled(model.viewport.zoom <= 1)
+            Slider(value: Binding(
+                get: { maxZoom > 1 ? Foundation.log(model.viewport.zoom) / Foundation.log(maxZoom) : 0 },
+                set: { setZoom(exp($0 * Foundation.log(maxZoom))) }
+            ), in: 0...1)
+            .controlSize(.mini)
+            .frame(width: 110)
+            .help("Zoom the timeline (pinch, or ⌘ + scroll). Scroll sideways to move along it.")
+            IconButton(icon: "plus.magnifyingglass", help: "Zoom in (⌘=)") { zoomStep(1.6) }
+                .disabled(model.viewport.zoom >= maxZoom)
+        }
+        .disabled(model.duration <= 0)
+    }
+
+    /// Zooms around the playhead when it's in view, otherwise around the middle.
+    private func setZoom(_ zoom: Double) {
+        let v = model.viewport
+        let anchor = (v.start...v.end).contains(playhead.time) ? playhead.time : v.start + v.span / 2
+        model.setZoom(zoom, keeping: anchor, at: v.span > 0 ? (anchor - v.start) / v.span : 0.5)
+    }
+
+    private func zoomStep(_ factor: Double) { setZoom(model.viewport.zoom * factor) }
+
+    /// Keyboard: Space play, ←/→ a frame (⇧ a second), ⌘B split, Delete cut, I/O trim, ⌘Z undo, ⌘= ⌘− ⌘0 zoom.
     private var shortcuts: some View {
         ZStack {
             Button("") { onPlayPause() }.keyboardShortcut(.space, modifiers: [])
@@ -231,6 +343,9 @@ struct VideoTimelineView: View {
             Button("") { model.trim(.start, at: playhead.time) }.keyboardShortcut("i", modifiers: [])
             Button("") { model.trim(.end, at: playhead.time) }.keyboardShortcut("o", modifiers: [])
             Button("") { model.undo() }.keyboardShortcut("z")
+            Button("") { zoomStep(1.6) }.keyboardShortcut("=")
+            Button("") { zoomStep(1 / 1.6) }.keyboardShortcut("-")
+            Button("") { setZoom(1) }.keyboardShortcut("0")
         }
         .buttonStyle(.plain)
         .frame(width: 0, height: 0)
@@ -247,11 +362,18 @@ struct VideoTimelineView: View {
     // MARK: Strip
 
     private func x(_ t: Double, _ width: CGFloat) -> CGFloat {
-        model.duration > 0 ? CGFloat(t / model.duration) * width : 0
+        let v = model.viewport
+        return v.span > 0 ? CGFloat((t - v.start) / v.span) * width : 0
     }
 
     private func t(_ x: CGFloat, _ width: CGFloat) -> Double {
-        min(max(Double(x / width) * model.duration, 0), model.duration)
+        let v = model.viewport
+        return min(max(v.start + Double(x / width) * v.span, 0), model.duration)
+    }
+
+    /// Keeps shapes that run off the strip a sane size when zoomed in (they're clipped anyway).
+    private func onStrip(_ x: CGFloat, _ width: CGFloat) -> CGFloat {
+        min(max(x, -40), width + 40)
     }
 
     private func scrub(to time: Double) {
@@ -262,22 +384,29 @@ struct VideoTimelineView: View {
     private func strip(width: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
             // Thumbnails. A drag anywhere scrubs; a click also selects the piece there.
-            ThumbnailStrip(images: model.thumbnails, height: stripHeight)
+            ThumbnailStrip(thumbs: model.thumbnails, version: model.thumbnailVersion,
+                           start: model.viewport.start, span: model.viewport.span, height: stripHeight)
                 .equatable()
                 .frame(width: width, height: stripHeight)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .offset(y: flagRow)
 
             // Cut-out parts, darkened.
-            ForEach(Array(model.edit.removedParts.enumerated()), id: \.offset) { _, gap in
-                let w = max(x(gap.upperBound, width) - x(gap.lowerBound, width), 0)
-                Rectangle()
-                    .fill(Color.black.opacity(0.66))
-                    .overlay(Image(systemName: "scissors").font(.system(size: 11)).foregroundStyle(.white.opacity(0.75)).opacity(w > 24 ? 1 : 0))
-                    .frame(width: w, height: stripHeight)
-                    .offset(x: x(gap.lowerBound, width), y: flagRow)
-                    .allowsHitTesting(false)
+            ZStack(alignment: .topLeading) {
+                ForEach(Array(model.edit.removedParts.enumerated()), id: \.offset) { _, gap in
+                    let left = onStrip(x(gap.lowerBound, width), width)
+                    let w = max(onStrip(x(gap.upperBound, width), width) - left, 0)
+                    Rectangle()
+                        .fill(Color.black.opacity(0.66))
+                        .overlay(Image(systemName: "scissors").font(.system(size: 11)).foregroundStyle(.white.opacity(0.75)).opacity(w > 24 ? 1 : 0))
+                        .frame(width: w, height: stripHeight)
+                        .offset(x: left, y: flagRow)
+                        .allowsHitTesting(false)
+                }
             }
+            .frame(width: width, height: flagRow + stripHeight, alignment: .topLeading)
+            .clipped()
+            .allowsHitTesting(false)
 
             // The whole strip scrubs (under the handles and flags, which have their own drags).
             Color.clear
@@ -297,10 +426,14 @@ struct VideoTimelineView: View {
                     }
                 }
 
-            // Kept pieces: a yellow frame with a grab handle at each end.
-            ForEach(Array(model.edit.pieces.enumerated()), id: \.offset) { i, piece in
-                pieceFrame(i, piece, width: width)
+            // Kept pieces: a yellow frame with a grab handle at each end (cut off at the strip's ends).
+            ZStack(alignment: .topLeading) {
+                ForEach(Array(model.edit.pieces.enumerated()), id: \.offset) { i, piece in
+                    pieceFrame(i, piece, width: width)
+                }
             }
+            .frame(width: width, height: flagRow + stripHeight, alignment: .topLeading)
+            .clipped()
 
             ruler(width: width)
                 .offset(y: flagRow + stripHeight + 2)
@@ -310,7 +443,11 @@ struct VideoTimelineView: View {
                 flagView(flag, width: width)
             }
 
-            PlayheadLine(playhead: playhead, duration: model.duration, width: width, top: flagRow - 4, height: stripHeight + 8)
+            overview(width: width)
+                .offset(y: flagRow + stripHeight + rulerHeight + 1)
+
+            PlayheadLine(playhead: playhead, start: model.viewport.start, span: model.viewport.span,
+                         width: width, top: flagRow - 4, height: stripHeight + 8)
                 .allowsHitTesting(false)
 
             if let name = draggedFlagName {
@@ -323,16 +460,43 @@ struct VideoTimelineView: View {
                     .allowsHitTesting(false)
             }
         }
-        .frame(width: width, height: flagRow + stripHeight + rulerHeight, alignment: .topLeading)
+        .frame(width: width, height: flagRow + stripHeight + rulerHeight + overviewHeight, alignment: .topLeading)
+        // Flags and labels for moments out of view stay hidden; the playhead may still poke into the margin.
+        .mask(Rectangle().padding(.horizontal, -Self.sidePadding))
         .coordinateSpace(name: "strip")
+    }
+
+    /// When zoomed in: a thin bar showing which part of the video is in view. Drag it to move along.
+    @ViewBuilder
+    private func overview(width: CGFloat) -> some View {
+        let v = model.viewport
+        if v.zoom > 1.001, model.duration > 0 {
+            let left = CGFloat(v.start / model.duration) * width
+            let w = max(CGFloat(v.span / model.duration) * width, 12)
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.secondary.opacity(0.15)).frame(width: width, height: 5)
+                Capsule().fill(Color.secondary.opacity(0.55)).frame(width: w, height: 5).offset(x: left)
+            }
+            .frame(width: width, height: overviewHeight)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { g in
+                        let middle = Double(g.location.x / width) * model.duration
+                        model.pan(by: middle - (model.viewport.start + model.viewport.span / 2))
+                    }
+            )
+            .help("The part of the video in view. Drag to move along it.")
+        }
     }
 
     /// Time labels under the strip, spaced so they never crowd.
     private func ruler(width: CGFloat) -> some View {
-        let duration = model.duration
-        let steps: [Double] = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600]
-        let step = steps.first { duration > 0 && CGFloat($0 / duration) * width >= 64 } ?? max(duration, 1)
-        let marks = duration > 0 ? Array(stride(from: 0, through: duration, by: step)) : []
+        let v = model.viewport
+        let steps: [Double] = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600]
+        let step = steps.first { v.span > 0 && CGFloat($0 / v.span) * width >= 64 } ?? max(v.span, 1)
+        let first = (v.start / step).rounded(.up) * step
+        let marks = v.span > 0 ? Array(stride(from: first, through: v.end, by: step)) : []
         return ZStack(alignment: .topLeading) {
             ForEach(marks, id: \.self) { mark in
                 VStack(alignment: .leading, spacing: 1) {
@@ -351,12 +515,13 @@ struct VideoTimelineView: View {
     static func rulerLabel(_ t: Double, step: Double) -> String {
         let minutes = Int(t) / 60
         let seconds = t - Double(minutes * 60)
-        return step < 1 ? String(format: "%d:%04.1f", minutes, seconds) : String(format: "%d:%02d", minutes, Int(seconds))
+        if step < 0.25 { return String(format: "%d:%05.2f", minutes, seconds) }
+        return step < 1 ? String(format: "%d:%04.1f", minutes, seconds) : String(format: "%d:%02d", minutes, Int(seconds.rounded()))
     }
 
     private func pieceFrame(_ i: Int, _ piece: ClosedRange<Double>, width: CGFloat) -> some View {
-        let left = x(piece.lowerBound, width)
-        let right = x(piece.upperBound, width)
+        let left = onStrip(x(piece.lowerBound, width), width)
+        let right = onStrip(x(piece.upperBound, width), width)
         let selected = model.selected == i
         return ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 6)
@@ -364,9 +529,13 @@ struct VideoTimelineView: View {
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(yellow, lineWidth: selected ? 3 : 2))
                 .frame(width: max(right - left, 2), height: stripHeight)
                 .allowsHitTesting(false)
-            handle(i, .start, width: width)
-            handle(i, .end, width: width)
-                .offset(x: max(right - left - handleWidth, 0))
+            if left > -handleWidth {
+                handle(i, .start, width: width)
+            }
+            if right < width + handleWidth {
+                handle(i, .end, width: width)
+                    .offset(x: max(right - left - handleWidth, 0))
+            }
         }
         .offset(x: left, y: flagRow)
     }
@@ -441,12 +610,13 @@ struct VideoTimelineView: View {
 
 private struct PlayheadLine: View {
     @ObservedObject var playhead: PlayheadModel
-    let duration: Double
+    let start: Double
+    let span: Double
     let width: CGFloat
     let top: CGFloat
     let height: CGFloat
 
-    private func x(_ t: Double) -> CGFloat { duration > 0 ? CGFloat(t / duration) * width : 0 }
+    private func x(_ t: Double) -> CGFloat { span > 0 ? CGFloat((t - start) / span) * width : 0 }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -522,43 +692,44 @@ private struct TimeReadout: View {
     }
 }
 
-/// The thumbnails, tiled across the strip. Equatable, so it only redraws when the pictures or size change.
+/// The thumbnails, tiled across the part of the video in view: each tile shows the thumbnail nearest
+/// its middle. Equatable, so it only redraws when the pictures or the view change.
 private struct ThumbnailStrip: View, Equatable {
-    let images: [CGImage]
+    let thumbs: [TimelineModel.Thumb]
+    let version: Int
+    let start: Double
+    let span: Double
     let height: CGFloat
 
     static func == (a: ThumbnailStrip, b: ThumbnailStrip) -> Bool {
-        a.height == b.height && a.images.count == b.images.count && zip(a.images, b.images).allSatisfy { $0 === $1 }
+        a.version == b.version && a.start == b.start && a.span == b.span && a.height == b.height
+    }
+
+    static func tileWidth(height: CGFloat, aspect: CGFloat?) -> CGFloat {
+        max(height * (aspect ?? 16 / 9), 24)
     }
 
     private var tileWidth: CGFloat {
-        guard let first = images.first else { return height * 16 / 9 }
-        let aspect = CGFloat(first.width) / CGFloat(max(first.height, 1))
-        return max(height * aspect, 24)
+        Self.tileWidth(height: height, aspect: thumbs.first.map { CGFloat($0.image.width) / CGFloat(max($0.image.height, 1)) })
     }
 
-    private func tileCount(_ width: CGFloat) -> Int {
-        max(Int((width / tileWidth).rounded(.up)), 1)
-    }
-
-    /// The picture for tile `k` of `count`: the thumbnail nearest the tile's middle.
-    private func image(_ k: Int, of count: Int) -> CGImage {
-        let position = (Double(k) + 0.5) / Double(count)
-        return images[min(Int(position * Double(images.count)), images.count - 1)]
+    private func image(_ k: Int, of count: Int) -> CGImage? {
+        let t = start + (Double(k) + 0.5) / Double(count) * span
+        return TimelineModel.nearest(t, in: thumbs)?.image
     }
 
     var body: some View {
         GeometryReader { g in
-            let count = tileCount(g.size.width)
+            let count = max(Int((g.size.width / tileWidth).rounded(.up)), 1)
             HStack(spacing: 0) {
                 ForEach(0..<count, id: \.self) { k in
                     Group {
-                        if images.isEmpty {
-                            Rectangle().fill(Color.gray.opacity(0.22))
-                        } else {
-                            Image(decorative: image(k, of: count), scale: 1)
+                        if let image = image(k, of: count) {
+                            Image(decorative: image, scale: 1)
                                 .resizable()
                                 .aspectRatio(contentMode: .fill)
+                        } else {
+                            Rectangle().fill(Color.gray.opacity(0.22))
                         }
                     }
                     .frame(width: tileWidth, height: height)
@@ -568,5 +739,13 @@ private struct ThumbnailStrip: View, Equatable {
             .frame(width: g.size.width, alignment: .leading)
             .clipped()
         }
+    }
+}
+
+extension TimelineModel {
+    /// How many thumbnail tiles fit across a strip `width` points wide.
+    func tileCount(width: CGFloat) -> Int {
+        let aspect = thumbnails.first.map { CGFloat($0.image.width) / CGFloat(max($0.image.height, 1)) }
+        return max(Int((width / ThumbnailStrip.tileWidth(height: VideoTimelineView.stripHeight, aspect: aspect)).rounded(.up)), 1)
     }
 }

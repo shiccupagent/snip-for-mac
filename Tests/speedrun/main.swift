@@ -129,6 +129,22 @@ MainActor.assumeIsolated {
     check(kept.keep([20...25, 2...4, 3...6, 28...40]) && kept.pieces == [2...6, 20...25, 28...30], "keep merges and clamps")
     check(!kept.keep([40...50]), "keep outside the video does nothing")
 
+    var view = TimelineViewport(duration: 100)
+    check(view.zoom == 1 && view.start == 0 && view.end == 100, "viewport starts showing everything")
+    view.setZoom(4, keeping: 50, at: 0.5)
+    check(view.span == 25 && view.start == 37.5, "zoom keeps the anchor in place")
+    view.setZoom(10, keeping: 2, at: 0.5)
+    check(view.start == 0 && view.span == 10, "zoom stops at the start")
+    view.pan(by: 1000)
+    check(view.end == 100, "pan stops at the end")
+    view.setZoom(1000, keeping: 50, at: 0)
+    check(view.span == TimelineViewport.minimumSpan, "zoom has a limit")
+    view.setZoom(4, keeping: 0, at: 0)
+    view.follow(24.9)
+    check(view.start > 20, "playback pages forward")
+    view.follow(3)
+    check(view.start <= 3 && view.end > 3, "follow brings an earlier moment back")
+
     print(failures == 0 ? "ALL PASS" : "\(failures) FAILED")
     exit(failures == 0 ? 0 : 1)
 }

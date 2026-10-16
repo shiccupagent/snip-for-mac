@@ -25,6 +25,8 @@ final class SpeedrunController: ObservableObject {
     private var region: CGRect = .zero
     private var overlayTicker: Timer?
     private var overlayScale: CGFloat = 2
+    /// How solid the timer is (Settings, or the slider in its right-click menu).
+    private(set) var opacity = Prefs.speedrunOpacity
     private var log: RunLogBuilder?
 
     private init() {
@@ -77,6 +79,13 @@ final class SpeedrunController: ObservableObject {
 
     func toggleOnScreen() { setOnScreen(!onScreen) }
 
+    /// Makes the timer more or less see-through, on screen and in the recording alike.
+    func setOpacity(_ value: Double) {
+        Prefs.speedrunOpacity = value
+        opacity = Prefs.speedrunOpacity
+        panel?.alphaValue = opacity
+    }
+
     private func startOverlay() {
         guard overlayTicker == nil else { return }
         renderOverlay()
@@ -93,7 +102,7 @@ final class SpeedrunController: ObservableObject {
 
     /// Draws the timer for the recording, where its window sits in the recorded area (kept inside it).
     private func renderOverlay() {
-        let renderer = ImageRenderer(content: TimerView(timer: timer, live: false))
+        let renderer = ImageRenderer(content: TimerView(timer: timer, live: false).opacity(opacity))
         renderer.scale = overlayScale
         guard let image = renderer.cgImage else { return }
         let size = CGSize(width: CGFloat(image.width) / overlayScale, height: CGFloat(image.height) / overlayScale)
@@ -162,6 +171,7 @@ final class SpeedrunController: ObservableObject {
         panel.level = .statusBar
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        panel.alphaValue = opacity
         panel.hasShadow = true
         panel.isMovableByWindowBackground = false
         panel.isReleasedWhenClosed = false
@@ -198,7 +208,7 @@ final class SpeedrunController: ObservableObject {
         let runLog = RunLog(
             video: video.lastPathComponent, cleanVideo: clean.lastPathComponent,
             game: timer.splits.game, category: timer.splits.category, offset: timer.splits.offset,
-            timer: .init(x: at.x, y: at.y, scale: pixelsPerPoint), runs: log.runs
+            timer: .init(x: at.x, y: at.y, scale: pixelsPerPoint, opacity: opacity < 1 ? opacity : nil), runs: log.runs
         )
         do {
             try runLog.data().write(to: RunLog.url(for: video), options: .atomic)
@@ -226,6 +236,9 @@ final class SpeedrunController: ObservableObject {
         add(timer.phase == .paused ? "Resume" : "Pause", Prefs.speedrunShortcut(.pause).display) { [timer] in timer.togglePause() }
         add("Reset", Prefs.speedrunShortcut(.reset).display) { [timer] in timer.reset() }
         menu.addItem(.separator())
+        let slider = NSMenuItem()
+        slider.view = OpacityMenuView(value: opacity) { [weak self] in self?.setOpacity($0) }
+        menu.addItem(slider)
         add("Hide on Screen (Still Recorded)", Prefs.speedrunShortcut(.visibility).display) { [weak self] in self?.setOnScreen(false) }
         add("Rename Game") { [weak self] in self?.beginEdit(.game) }
         add("Edit Splits…") { SplitsEditorWindow.show() }
@@ -399,6 +412,39 @@ private final class TimerHostingView: NSHostingView<TimerView> {
     override func rightMouseDown(with event: NSEvent) {
         guard let menu = menuProvider?() else { return }
         NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+}
+
+/// The opacity slider inside the timer's right-click menu: drag it and watch the timer change.
+private final class OpacityMenuView: NSView {
+    private let label = NSTextField(labelWithString: "")
+    private let slider: NSSlider
+    private let onChange: (Double) -> Void
+
+    init(value: Double, onChange: @escaping (Double) -> Void) {
+        self.onChange = onChange
+        slider = NSSlider(value: value, minValue: 0.2, maxValue: 1, target: nil, action: nil)
+        super.init(frame: NSRect(x: 0, y: 0, width: 250, height: 46))
+        label.font = .menuFont(ofSize: 0)
+        label.frame = NSRect(x: 20, y: 25, width: 220, height: 17)
+        slider.frame = NSRect(x: 18, y: 4, width: 214, height: 20)
+        slider.isContinuous = true
+        slider.target = self
+        slider.action = #selector(changed)
+        addSubview(label)
+        addSubview(slider)
+        showValue()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func changed() {
+        onChange(slider.doubleValue)
+        showValue()
+    }
+
+    private func showValue() {
+        label.stringValue = "Opacity: \(Int((slider.doubleValue * 100).rounded()))%"
     }
 }
 

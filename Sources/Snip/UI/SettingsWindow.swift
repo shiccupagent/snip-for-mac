@@ -30,6 +30,7 @@ struct SettingsView: View {
     @AppStorage(Prefs.Key.fps) private var fps = 60
     @AppStorage(Prefs.Key.recordDelay) private var recordDelay = 3
     @AppStorage(Prefs.Key.speedrunOnScreen) private var speedrunOnScreen = true
+    @AppStorage(Prefs.Key.speedrunOpacity) private var speedrunOpacity = 1.0
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var permission = Permission.screenRecordingAllowed
 
@@ -81,6 +82,20 @@ struct SettingsView: View {
                     set: { speedrunOnScreen = $0; SpeedrunController.shared.setOnScreen($0) }
                 ))
                 Text("It's in the recording either way. The 👁 button on the record bar (or \(Prefs.speedrunShortcut(.visibility).display)) switches this mid-run.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                LabeledContent("Opacity") {
+                    HStack {
+                        Slider(value: Binding(
+                            get: { speedrunOpacity },
+                            set: { speedrunOpacity = $0; SpeedrunController.shared.setOpacity($0) }
+                        ), in: 0.2...1)
+                        Text("\(Int((speedrunOpacity * 100).rounded()))%")
+                            .monospacedDigit()
+                            .frame(width: 40, alignment: .trailing)
+                    }
+                }
+                Text("How see-through the timer is, on your screen and in the recording. Also in the timer's right-click menu.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 ForEach(SpeedrunAction.allCases, id: \.self) { action in

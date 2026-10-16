@@ -27,7 +27,8 @@ enum SnipMain {
             let args = CommandLine.arguments
             Task { @MainActor in
                 let ok = await VideoWindowController.snapshot(url: URL(fileURLWithPath: args[2]), to: URL(fileURLWithPath: args[3]),
-                                                              sampleEdit: args.contains("--edit"))
+                                                              sampleEdit: args.contains("--edit"),
+                                                              zoom: args.firstIndex(of: "--zoom").flatMap { args.indices.contains($0 + 1) ? Double(args[$0 + 1]) : nil })
                 exit(ok ? 0 : 1)
             }
             RunLoop.main.run()

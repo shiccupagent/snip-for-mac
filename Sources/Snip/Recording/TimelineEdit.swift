@@ -174,3 +174,43 @@ struct TimelineEdit: Equatable {
         }
     }
 }
+
+/// The stretch of the video the timeline shows: all of it, or a zoomed-in part.
+struct TimelineViewport: Equatable {
+    let duration: Double
+    private(set) var start: Double = 0
+    private(set) var span: Double
+
+    /// The most zoomed-in view shows half a second across the strip.
+    static let minimumSpan = 0.5
+
+    init(duration: Double) {
+        self.duration = max(duration, 0)
+        span = self.duration
+    }
+
+    var end: Double { start + span }
+    var zoom: Double { span > 0 ? duration / span : 1 }
+    var maxZoom: Double { max(1, duration / Self.minimumSpan) }
+
+    /// Zooms to `zoom` (1 = the whole video), keeping moment `t` at `fraction` (0–1) across the strip.
+    mutating func setZoom(_ zoom: Double, keeping t: Double, at fraction: Double) {
+        guard duration > 0 else { return }
+        span = duration / min(max(zoom, 1), maxZoom)
+        start = clampedStart(t - min(max(fraction, 0), 1) * span)
+    }
+
+    mutating func pan(by seconds: Double) {
+        start = clampedStart(start + seconds)
+    }
+
+    /// Brings `t` into view, paging forward as playback reaches the right edge.
+    mutating func follow(_ t: Double) {
+        guard span < duration, t < start || t > end - span * 0.02 else { return }
+        start = clampedStart(t - span * 0.05)
+    }
+
+    private func clampedStart(_ s: Double) -> Double {
+        min(max(s, 0), max(duration - span, 0))
+    }
+}

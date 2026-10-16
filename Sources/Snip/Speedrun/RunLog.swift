@@ -22,6 +22,8 @@ struct RunLog: Codable, Equatable {
         var y: Double
         /// Video pixels per point.
         var scale: Double
+        /// How solid the timer is drawn (nil: fully, as in logs from before the setting).
+        var opacity: Double? = nil
     }
 
     struct Run: Codable, Equatable {

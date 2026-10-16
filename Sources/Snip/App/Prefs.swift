@@ -104,6 +104,7 @@ enum Prefs {
         static let launchedBefore = "launchedBefore"
         static let speedrunTimer = "speedrunTimer"
         static let speedrunOnScreen = "speedrunOnScreen"
+        static let speedrunOpacity = "speedrunOpacity"
         static let splitsPath = "speedrunSplitsPath"
         static func speedrunShortcut(_ action: SpeedrunAction) -> String { "speedrunKey.\(action.rawValue)" }
     }
@@ -131,6 +132,7 @@ enum Prefs {
             Key.snipMode: SnipMode.rect.rawValue,
             Key.speedrunTimer: false,
             Key.speedrunOnScreen: true,
+            Key.speedrunOpacity: 1.0,
         ])
     }
 
@@ -183,6 +185,12 @@ enum Prefs {
     }
 
     /// Off: the timer is hidden while playing and appears only in the recording.
+    /// How solid the timer is, on screen and in recordings (0.2–1).
+    static var speedrunOpacity: Double {
+        get { min(max(defaults.double(forKey: Key.speedrunOpacity), 0.2), 1) }
+        set { defaults.set(min(max(newValue, 0.2), 1), forKey: Key.speedrunOpacity) }
+    }
+
     static var speedrunOnScreen: Bool {
         get { defaults.bool(forKey: Key.speedrunOnScreen) }
         set { defaults.set(newValue, forKey: Key.speedrunOnScreen) }
