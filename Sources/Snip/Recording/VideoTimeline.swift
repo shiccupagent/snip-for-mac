@@ -621,7 +621,7 @@ private struct PlayheadLine: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             // Where the pointer is: a faint line and its time, to aim a click.
-            if let hover = playhead.hover {
+            if let hover = playhead.hover, hover >= start, hover <= start + span {
                 Rectangle()
                     .fill(Color.white.opacity(0.45))
                     .frame(width: 1, height: height - 8)
