@@ -31,6 +31,14 @@ gh release download latest -R "$REPO" -p Snip.zip -D "$DL"
 ditto -x -k "$DL/Snip.zip" "$DL/x"
 codesign --verify "$DL/x/Snip.app"
 
+# Never quit Snip mid-recording: that loses the video (it did once). A recording holds an .mp4 open for writing.
+if PID="$(pgrep -x Snip)"; then
+  if lsof -a -p "$PID" -d '^txt' 2>/dev/null | awk '$4 ~ /^[0-9]+[wu]$/' | grep -q '\.mp4'; then
+    rm -rf "$DL"
+    echo "Snip is recording right now; not installing. Run this again once the recording stops."
+    exit 75
+  fi
+fi
 pkill -x Snip || true
 for i in $(seq 1 20); do pgrep -x Snip >/dev/null || break; sleep 0.5; done
 rm -rf /Applications/Snip.app
