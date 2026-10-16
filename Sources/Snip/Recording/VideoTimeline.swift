@@ -526,23 +526,37 @@ private struct ThumbnailStrip: View, Equatable {
         a.height == b.height && a.images.count == b.images.count && zip(a.images, b.images).allSatisfy { $0 === $1 }
     }
 
+    private var tileWidth: CGFloat {
+        guard let first = images.first else { return height * 16 / 9 }
+        let aspect = CGFloat(first.width) / CGFloat(max(first.height, 1))
+        return max(height * aspect, 24)
+    }
+
+    private func tileCount(_ width: CGFloat) -> Int {
+        max(Int((width / tileWidth).rounded(.up)), 1)
+    }
+
+    /// The picture for tile `k` of `count`: the thumbnail nearest the tile's middle.
+    private func image(_ k: Int, of count: Int) -> CGImage {
+        let position = (Double(k) + 0.5) / Double(count)
+        return images[min(Int(position * Double(images.count)), images.count - 1)]
+    }
+
     var body: some View {
         GeometryReader { g in
-            let aspect: CGFloat = images.first.map { CGFloat($0.width) / CGFloat(max($0.height, 1)) } ?? 16 / 9
-            let tile = max(height * aspect, 24)
-            let count = max(Int((g.size.width / tile).rounded(.up)), 1)
+            let count = tileCount(g.size.width)
             HStack(spacing: 0) {
                 ForEach(0..<count, id: \.self) { k in
                     Group {
                         if images.isEmpty {
                             Rectangle().fill(Color.gray.opacity(0.22))
                         } else {
-                            Image(decorative: images[min(Int((CGFloat(k) + 0.5) / CGFloat(count) * CGFloat(images.count)), images.count - 1)], scale: 1)
+                            Image(decorative: image(k, of: count), scale: 1)
                                 .resizable()
                                 .aspectRatio(contentMode: .fill)
                         }
                     }
-                    .frame(width: tile, height: height)
+                    .frame(width: tileWidth, height: height)
                     .clipped()
                 }
             }
