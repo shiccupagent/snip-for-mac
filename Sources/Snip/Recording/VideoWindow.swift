@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import AVKit
+import Combine
 import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
@@ -18,7 +19,8 @@ final class VideoModel: ObservableObject {
     }
 }
 
-/// Plays back a finished recording with big Copy / Save / Share / GIF buttons underneath.
+/// Plays back a finished recording with Show File / Copy / Share / GIF buttons above and a timeline
+/// editor below (trim, cut out parts, move speedrun splits; see `VideoTimelineView`).
 @MainActor
 final class VideoWindowController: NSWindowController, NSWindowDelegate {
     private static var openControllers: [VideoWindowController] = []
@@ -27,6 +29,14 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
     private let player: AVPlayer
     private let shareAnchor = AnchorBox()
     private var timerPanel: NSWindow?
+    private let timeline = TimelineModel()
+    private let playhead = PlayheadModel()
+    private var timeObserver: Any?
+    /// Scrubbing: at most one seek in flight, and the newest target waits for it (Apple's smooth
+    /// scrubbing pattern), so dragging never queues up a backlog of frames to decode.
+    private var seekTarget: Double?
+    private var seeking = false
+    private var playingWatch: AnyCancellable?
 
     static func open(url: URL, pointSize: CGSize) {
         let controller = VideoWindowController(url: url, pointSize: pointSize)
@@ -52,13 +62,15 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
         window.tabbingMode = .disallowed
         window.minSize = NSSize(width: 680, height: 380)
 
-        let playerView = AVPlayerView()
+        let playerView = PlainPlayerView()
         playerView.player = player
-        playerView.controlsStyle = .inline
+        // The timeline below is the scrubber and play button.
+        playerView.controlsStyle = .none
         playerView.videoGravity = .resizeAspect
 
         let bar = NSHostingView(rootView: VideoBar(
             model: model,
+            timeline: timeline,
             shareAnchor: shareAnchor,
             // Opens the bar in picture mode like every other New; its 🎥 button switches to recording.
             onNew: { CaptureCoordinator.shared.begin(.snip) },
@@ -69,8 +81,18 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
             onReveal: { NSWorkspace.shared.activateFileViewerSelecting([url]) }
         ))
 
+        let timelineView = NSHostingView(rootView: VideoTimelineHost(
+            model: model,
+            timeline: timeline,
+            playhead: playhead,
+            onSeek: { [weak self] t in self?.seek(t) },
+            onPlayPause: { [weak self] in self?.playPause() },
+            onMute: { [weak self] in self?.toggleMute() },
+            onSave: { [weak self] in self?.saveEdit() }
+        ))
+
         let container = NSView()
-        for v in [playerView, bar] as [NSView] {
+        for v in [playerView, bar, timelineView] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(v)
         }
@@ -81,22 +103,86 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
             playerView.topAnchor.constraint(equalTo: bar.bottomAnchor),
             playerView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             playerView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            playerView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            playerView.bottomAnchor.constraint(equalTo: timelineView.topAnchor),
+            timelineView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            timelineView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            timelineView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
         window.contentView = container
 
         let visible = NSScreen.underMouse.visibleFrame
         let width = min(max(pointSize.width, 700), visible.width * 0.85)
-        let height = min(max(pointSize.height + 52, 420), visible.height * 0.85)
+        let height = min(max(pointSize.height + 52 + 120, 520), visible.height * 0.85)
+        window.minSize = NSSize(width: 680, height: 480)
         window.setContentSize(NSSize(width: width, height: height))
         window.center()
+
+        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 30), queue: .main) { [weak self] time in
+            MainActor.assumeIsolated { self?.tick(time.seconds) }
+        }
+        playingWatch = player.publisher(for: \.timeControlStatus).receive(on: RunLoop.main).sink { [weak self] status in
+            MainActor.assumeIsolated { self?.playhead.playing = status != .paused }
+        }
+        Task { await loadTimeline() }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Development aid (`Snip dev-snapshot <video> <out.png> [--edit]`): draws this window to a PNG
+    /// without ever showing it, optionally with a sample edit, so the timeline can be checked by eye.
+    static func snapshot(url: URL, to out: URL, sampleEdit: Bool) async -> Bool {
+        let controller = VideoWindowController(url: url, pointSize: CGSize(width: 1100, height: 520))
+        guard let window = controller.window else { return false }
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.setContentSize(NSSize(width: 1100, height: 700))
+        window.orderFrontRegardless()
+        try? await Task.sleep(for: .seconds(4))
+        if sampleEdit {
+            let d = controller.timeline.duration
+            controller.timeline.trim(.start, at: d * 0.04)
+            controller.timeline.split(at: d * 0.3)
+            controller.timeline.split(at: d * 0.42)
+            controller.timeline.selected = nil
+            controller.timeline.removeSelected(or: d * 0.36)
+            controller.timeline.selected = controller.timeline.edit.piece(at: d * 0.6)
+            controller.playhead.time = d * 0.55
+            controller.playhead.hover = d * 0.78
+        }
+        try? await Task.sleep(for: .milliseconds(600))
+        defer { window.close() }
+        guard let view = window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return false }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        guard let png = rep.representation(using: .png, properties: [:]) else { return false }
+        return (try? png.write(to: out)) != nil
+    }
+
+    /// Unsaved timeline edits: ask before closing.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard timeline.dirty, !model.busy else { return !model.busy }
+        let alert = NSAlert()
+        alert.messageText = "Save your edit to this recording?"
+        alert.informativeText = "Your cuts and split changes aren't in the video yet."
+        alert.addButton(withTitle: "Save Edit")
+        alert.addButton(withTitle: "Don't Save")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            saveEdit(closeAfter: true)
+            return false
+        case .alertSecondButtonReturn:
+            return true
+        default:
+            return false
+        }
+    }
+
     func windowWillClose(_ notification: Notification) {
         timerPanel?.close()
         player.pause()
+        if let timeObserver { player.removeTimeObserver(timeObserver) }
+        timeObserver = nil
+        playingWatch = nil
         VideoWindowController.openControllers.removeAll { $0 === self }
     }
 
@@ -116,6 +202,108 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
     private func share() {
         guard let anchor = shareAnchor.view else { return }
         NSSharingServicePicker(items: [model.url]).show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+    }
+
+    // MARK: Timeline
+
+    /// Reads the file as it is now into the timeline: length, thumbnails and the speedrun log.
+    private func loadTimeline() async {
+        let asset = AVURLAsset(url: model.url)
+        let duration = (try? await asset.load(.duration).seconds) ?? 0
+        let log = model.hasTimer ? try? RunLog.load(RunLog.url(for: model.url)) : nil
+        timeline.load(duration: duration.isFinite ? duration : 0, log: log)
+        timeline.setThumbnails([])
+        guard duration.isFinite, duration > 0 else { return }
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 240, height: 240)
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 1, preferredTimescale: 600)
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 1, preferredTimescale: 600)
+        let count = 30
+        var images: [CGImage] = []
+        for k in 0..<count {
+            let time = CMTime(seconds: duration * (Double(k) + 0.5) / Double(count), preferredTimescale: 600)
+            if let result = try? await generator.image(at: time) { images.append(result.image) }
+        }
+        timeline.setThumbnails(images)
+    }
+
+    private func seek(_ t: Double) {
+        seekTarget = t
+        if !seeking { seekToTarget() }
+    }
+
+    private func seekToTarget() {
+        guard let t = seekTarget else { return }
+        seekTarget = nil
+        seeking = true
+        player.seek(to: CMTime(seconds: t, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            Task { @MainActor in
+                self?.seeking = false
+                self?.seekToTarget()
+            }
+        }
+    }
+
+    private func toggleMute() {
+        player.isMuted.toggle()
+        playhead.muted = player.isMuted
+    }
+
+    private func playPause() {
+        if player.timeControlStatus != .paused {
+            player.pause()
+            return
+        }
+        // Play from the first kept moment; at the end of the edit, start again from the top.
+        let now = player.currentTime().seconds
+        if let next = timeline.edit.keptTime(atOrAfter: now), timeline.edit.pieces.last.map({ next < $0.upperBound - 0.05 }) ?? false {
+            if next > now + 0.01 { seek(next) }
+        } else if let first = timeline.edit.pieces.first {
+            seek(first.lowerBound)
+        }
+        player.play()
+    }
+
+    /// Follows playback with the playhead and jumps over cut-out parts, so the preview plays the edit.
+    private func tick(_ t: Double) {
+        // While scrubbing, the playhead follows the pointer, not the frames still being decoded.
+        guard t.isFinite, !seeking, seekTarget == nil else { return }
+        playhead.time = t
+        guard player.timeControlStatus != .paused, timeline.edit.isCut else { return }
+        if let next = timeline.edit.keptTime(atOrAfter: t) {
+            if next > t + 0.03 { seek(next) }
+        } else {
+            player.pause()
+        }
+    }
+
+    private func saveEdit(closeAfter: Bool = false) {
+        guard !model.busy, timeline.dirty else { return }
+        timerPanel?.close()
+        let edit = timeline.edit
+        let log = timeline.log
+        model.busy = true
+        model.status = "Saving the edit…"
+        player.pause()
+        Task {
+            do {
+                try await VideoCutter.save(edit, log: log, video: model.url) { [weak self] message in
+                    self?.model.status = message
+                }
+                model.busy = false
+                if closeAfter {
+                    window?.close()
+                    return
+                }
+                player.replaceCurrentItem(with: AVPlayerItem(url: model.url))
+                await loadTimeline()
+                flash(edit.isCut ? "Edit saved. The old version is in the Trash." : "Splits saved")
+            } catch {
+                model.busy = false
+                flash("Couldn't save the edit: \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: Speedrun timer
@@ -176,6 +364,7 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
                 }
                 player.replaceCurrentItem(with: AVPlayerItem(url: model.url))
                 await player.seek(to: at, toleranceBefore: .zero, toleranceAfter: .zero)
+                await loadTimeline()
                 model.busy = false
                 flash("Timer updated")
             } catch {
@@ -210,6 +399,7 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
 
 private struct VideoBar: View {
     @ObservedObject var model: VideoModel
+    @ObservedObject var timeline: TimelineModel
     let shareAnchor: AnchorBox
     let onNew: () -> Void
     let onCopy: () -> Void
@@ -237,13 +427,15 @@ private struct VideoBar: View {
                 .buttonStyle(FilledButtonStyle())
                 .keyboardShortcut("c")
                 .help("Copy the video (⌘C), then paste it into any app")
+                .disabled(timeline.dirty)
             IconButton(icon: "square.and.arrow.up", help: "Share", action: onShare)
                 .background(AnchorView(box: shareAnchor))
+                .disabled(timeline.dirty)
             IconButton(icon: "photo.on.rectangle", help: "Make a GIF and copy it", label: "GIF", action: onGIF)
-                .disabled(model.busy)
+                .disabled(model.busy || timeline.dirty)
             if model.hasTimer {
                 IconButton(icon: "flag.checkered", help: "Edit the speedrun timer: game, split names and split times", label: "Edit Timer", action: onEditTimer)
-                    .disabled(model.busy)
+                    .disabled(model.busy || timeline.dirty)
             }
         }
         .padding(.horizontal, 12)
@@ -291,4 +483,26 @@ enum GIFExporter {
             throw NSError(domain: "Snip", code: 6, userInfo: [NSLocalizedDescriptionKey: "Couldn't finish the GIF."])
         }
     }
+}
+
+/// The timeline, greyed out while the file is being rewritten.
+private struct VideoTimelineHost: View {
+    @ObservedObject var model: VideoModel
+    let timeline: TimelineModel
+    let playhead: PlayheadModel
+    let onSeek: (Double) -> Void
+    let onPlayPause: () -> Void
+    let onMute: () -> Void
+    let onSave: () -> Void
+
+    var body: some View {
+        VideoTimelineView(model: timeline, playhead: playhead, busy: model.busy, onSeek: onSeek,
+                          onPlayPause: onPlayPause, onMute: onMute, onSave: onSave)
+    }
+}
+
+/// The video itself: no built-in controls (the timeline has them), and it never takes the keyboard,
+/// so Space, Delete and ⌘B reach the timeline.
+private final class PlainPlayerView: AVPlayerView {
+    override var acceptsFirstResponder: Bool { false }
 }

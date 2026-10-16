@@ -37,5 +37,14 @@ ScreenCaptureKit. User-facing docs: README.md.
   `~/.local/bin/snip` links to the app binary on this Mac. Offline-test render with an ffmpeg testsrc clip + hand-written log.
 - Drive tests with CGEvent (computer-use can't see Snip, an accessory app). Stop if someone is using the screen.
 
+## Timeline editor and AI tools
+- `Recording/TimelineEdit` is the edit (kept pieces, pure, tested in test_speedrun.sh); `VideoTimeline` the view
+  (`TimelineModel` changes on edits, `PlayheadModel` 30×/s, so playback redraws only the playhead); `VideoCutter`
+  re-encodes (a video composition forces real re-encoding: no edit-list preroll) and swaps the file in (old → Trash).
+  Scrubbing chains seeks: one in flight, newest target waits.
+- `AI/VideoTools` backs `Snip video …` (VideoCLI) and `Snip mcp` (MCPServer, stdio JSON-RPC). Guide: docs/AI-EDITING.md.
+  They compile with the CLT if Prefs/SpeedrunRenderer/VideoTime are stubbed: drive them locally on ffmpeg testsrc clips.
+- `Snip dev-snapshot <video> <out.png> [--edit]` draws the video window invisibly to a PNG: check UI changes by eye.
+
 ## Repo
 - Public, MIT. No Co-Authored-By trailers. Never commit personal info, keys or certificates.

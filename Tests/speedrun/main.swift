@@ -94,6 +94,41 @@ MainActor.assumeIsolated {
     renameLog.rename(0, to: "Intro")
     check(renameLog.runs[0].segments[0].name == "Intro", "rename reaches the run log")
 
+    // Timeline edits: trim the ends, cut out the middle, and move the run log onto the edited video.
+    var edit = TimelineEdit(duration: 20)
+    check(!edit.isCut && edit.piece(at: 20) == 0, "timeline starts whole")
+    edit.move(piece: 0, edge: .start, to: 2)                 // trim the first 2 s
+    edit.move(piece: 0, edge: .end, to: 18)                  // and the last 2 s
+    check(edit.pieces == [2...18] && edit.isCut && edit.keptDuration == 16, "trim handles")
+    check(edit.split(at: 8) && edit.split(at: 10) && edit.pieces.count == 3, "split at playhead")
+    check(!edit.split(at: 8.05), "no sliver pieces")
+    check(edit.remove(1) && edit.pieces == [2...8, 10...18], "cut out the middle")
+    check(edit.removedParts == [0...2, 8...10, 18...20], "removed parts")
+    check(edit.editedTime(1) == 0 && edit.editedTime(5) == 3 && edit.editedTime(9) == 6 && edit.editedTime(12) == 8 && edit.editedTime(19) == 14, "edited times")
+    check(edit.keptTime(atOrAfter: 9) == 10 && edit.keptTime(atOrAfter: 18.5) == nil, "playback skips cuts")
+    var dragged = edit
+    dragged.move(piece: 1, edge: .start, to: 5)
+    check(dragged.pieces[1].lowerBound == 8, "trim stops at the neighbour")
+    var oneLeft = TimelineEdit(duration: 5)
+    check(!oneLeft.remove(0), "last piece stays")
+    let cutLog = RunLog(video: "v.mp4", cleanVideo: "c.mp4", game: "G", category: "C", offset: 0, timer: .init(x: 0, y: 0, scale: 2),
+                        runs: [RunLog.Run(attempt: 1, start: 3, segments: [RunLog.Segment(name: "A", split: 9), RunLog.Segment(name: "B", split: 15)],
+                                          pauses: [[8.5, 9.5]], reset: nil)])
+    let moved = edit.apply(to: cutLog)
+    check(moved.runs[0].start == 1 && moved.runs[0].segments.map(\.split) == [6, 11] && moved.runs[0].pauses == [], "run log follows the edit")
+    check(edit.cutsInsideRun(cutLog), "warns about a cut inside a run")
+    var trimOnly = TimelineEdit(duration: 20)
+    trimOnly.move(piece: 0, edge: .start, to: 2)
+    check(!trimOnly.cutsInsideRun(cutLog), "trimming before the run is fine")
+
+    var keys = TimelineEdit(duration: 30)
+    check(keys.trim(.start, at: 5) && keys.trim(.end, at: 25) && keys.pieces == [5...25], "I and O trim to the playhead")
+    check(!keys.trim(.start, at: 24.95), "trim can't leave a sliver")
+    check(keys.cut(10...12) && keys.cut(20...30) && keys.pieces == [5...10, 12...20], "cut ranges, even past the end")
+    var kept = TimelineEdit(duration: 30)
+    check(kept.keep([20...25, 2...4, 3...6, 28...40]) && kept.pieces == [2...6, 20...25, 28...30], "keep merges and clamps")
+    check(!kept.keep([40...50]), "keep outside the video does nothing")
+
     print(failures == 0 ? "ALL PASS" : "\(failures) FAILED")
     exit(failures == 0 ? 0 : 1)
 }

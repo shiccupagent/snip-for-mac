@@ -4,10 +4,32 @@ import AppKit
 enum SnipMain {
     @MainActor
     static func main() {
-        // `Snip speedrun …` is the command-line tool for re-timing recorded runs (no UI).
-        if CommandLine.arguments.dropFirst().first == "speedrun" {
+        // Command-line modes (no UI): `speedrun` re-times recorded runs, `video` looks at and edits
+        // recordings, `mcp` serves both to AI apps. Guide: docs/AI-EDITING.md.
+        let command = CommandLine.arguments.dropFirst().first
+        if let command, ["speedrun", "video", "mcp"].contains(command) {
             NSApplication.shared.setActivationPolicy(.prohibited)
-            Task { @MainActor in exit(await SpeedrunCLI.run(Array(CommandLine.arguments.dropFirst(2)))) }
+            Prefs.register()
+            let rest = Array(CommandLine.arguments.dropFirst(2))
+            Task { @MainActor in
+                switch command {
+                case "speedrun": exit(await SpeedrunCLI.run(rest))
+                case "video": exit(await VideoCLI.run(rest))
+                default: exit(await MCPServer.run())
+                }
+            }
+            RunLoop.main.run()
+        }
+        if command == "dev-snapshot", CommandLine.arguments.count >= 4 {
+            NSApplication.shared.setActivationPolicy(.accessory)
+            NSApplication.shared.finishLaunching()
+            Prefs.register()
+            let args = CommandLine.arguments
+            Task { @MainActor in
+                let ok = await VideoWindowController.snapshot(url: URL(fileURLWithPath: args[2]), to: URL(fileURLWithPath: args[3]),
+                                                              sampleEdit: args.contains("--edit"))
+                exit(ok ? 0 : 1)
+            }
             RunLoop.main.run()
         }
         let app = NSApplication.shared

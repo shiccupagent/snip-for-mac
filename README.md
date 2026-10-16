@@ -13,6 +13,10 @@ Press **⌥⇧R** to record the screen instead. If you've used the Snipping Tool
 - **Mark up** with pen, highlighter, arrows, shapes, text, redact (pixelate) and crop. Every edit is copied automatically.
 - **Copy text** out of any screenshot (on-device text recognition).
 - **Record** an area with computer sound and microphone, then copy the video, share it, or turn it into a GIF in one click.
+- **Edit recordings on a timeline**: trim the ends, split and cut out the middle, with a thumbnail strip, smooth
+  scrubbing and undo. Saves straight into the file.
+- **Let your AI edit for you**: a built-in MCP server and command line, so Claude, Gemini or any MCP app can watch a
+  recording in seconds (labelled contact sheets) and trim or cut it. See [docs/AI-EDITING.md](docs/AI-EDITING.md).
 - **Speedrun timer built in**: a LiveSplit-style timer (same colors and layout, reads and writes LiveSplit `.lss` splits)
   that sits in your recording, with global split keys that work while your game has focus.
 - **AI-assisted split timing**: every speedrun recording saves its splits as JSON next to a clean copy of the video, so
@@ -53,7 +57,18 @@ Every **New** button opens the bar in picture mode; press 🎥 on the bar to rec
 
 **Recordings** save to `~/Movies/Snips`. Everything is saved as you go, with no Save step: **Show File** opens Finder with the file selected, ready to drag into YouTube, Discord or anywhere, without making copies. The video window also has **Copy** (paste the video into Messages, Slack or Mail), Share, and **GIF**, which makes a GIF and copies it.
 
+**Timeline editor** (under every recording): drag across the thumbnails to scrub, then
+- drag the yellow ends of the clip to trim it, or press **I** / **O** to trim to the playhead;
+- **Split** (⌘B) at the playhead and **Delete** a piece to cut out the middle; cut-out parts turn dark;
+- **Space** plays (skipping what you cut), **←/→** step a frame, **⇧←/→** a second, **⌘Z** undoes;
+- **Save Edit** writes it into the video (the old version goes to the Trash). Speedrun splits show as flags you can
+  drag, and the timer follows your cuts.
+
 Snips save to `~/Pictures/Snips`.
+
+**Let your AI edit your videos:** connect Snip to Claude Code, Claude Desktop or Gemini CLI with one line
+(`claude mcp add snip -- /Applications/Snip.app/Contents/MacOS/Snip mcp`), then ask "cut the loading screens out of my
+last recording". Setup and tools: [docs/AI-EDITING.md](docs/AI-EDITING.md).
 
 **Speedrun timer (LiveSplit, built in):** on the record bar, set a delay and a 🏁 **Splits** button appears next to it. Turn it on and a LiveSplit-style timer (same colors and layout) sits in the top-right corner of the recorded area. It starts the moment the recording starts.
 - Split keys work while your game has focus: **Num 1** split, **Num 2** skip, **Num 3** reset, **Num 5** pause, **Num 8** undo. Change them in Settings → Speedrun timer.

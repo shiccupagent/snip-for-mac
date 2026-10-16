@@ -5,5 +5,5 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
-swiftc -O Sources/Snip/Speedrun/Splits.swift Sources/Snip/Speedrun/SpeedrunTimer.swift Sources/Snip/Speedrun/RunLog.swift Tests/speedrun/main.swift -o "$out/test"
+swiftc -O Sources/Snip/Speedrun/Splits.swift Sources/Snip/Speedrun/SpeedrunTimer.swift Sources/Snip/Speedrun/RunLog.swift Sources/Snip/Recording/TimelineEdit.swift Tests/speedrun/main.swift -o "$out/test"
 "$out/test" Tests/speedrun/sample.lss
