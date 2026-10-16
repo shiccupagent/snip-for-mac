@@ -149,7 +149,7 @@ enum Permission {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Snip needs permission to see your screen"
-        var info = "Open System Settings → Privacy & Security → Screen & System Audio Recording, turn on Snip, then reopen Snip.\n\nIf Snip is already on, turn it off and on again. macOS sometimes keeps an old entry after an update."
+        var info = "Open System Settings → Privacy & Security → Screen & System Audio Recording, turn on Snip, then reopen Snip.\n\nIf Snip is already on and this keeps appearing, macOS is holding an old entry from an earlier version: select Snip in that list, click the − button to remove it, then reopen Snip and allow it again."
         if let error { info += "\n\n(\(error.localizedDescription))" }
         alert.informativeText = info
         alert.addButton(withTitle: "Open System Settings")
