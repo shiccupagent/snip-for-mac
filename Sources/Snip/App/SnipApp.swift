@@ -138,6 +138,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         delayItem.submenu = delayMenu
         menu.addItem(delayItem)
 
+        let edit = item("Edit a Recording…", #selector(editRecording))
+        edit.image = NSImage(systemSymbolName: "film", accessibilityDescription: nil)
+        menu.addItem(edit)
+
         menu.addItem(.separator())
         menu.addItem(item("Open Snips Folder", #selector(openSnips)))
         menu.addItem(item("Open Recordings Folder", #selector(openRecordings)))
@@ -164,6 +168,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func delayedSnip(_ sender: NSMenuItem) { CaptureCoordinator.shared.begin(.snip, delay: sender.tag) }
     @objc func openSnips() { openFolder(Prefs.snipFolder) }
     @objc func openRecordings() { openFolder(Prefs.recordFolder) }
+
+    /// Opens any recording (or other video) in the timeline editor.
+    @objc func editRecording() {
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.mpeg4Movie, .quickTimeMovie]
+        panel.directoryURL = Prefs.recordFolder
+        panel.prompt = "Edit"
+        panel.message = "Choose a recording to edit"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        VideoWindowController.edit(url)
+    }
+
+    /// Videos dropped on Snip's icon, or opened with Open With → Snip, open in the timeline editor.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls { VideoWindowController.edit(url) }
+    }
     @objc func showSettings() { SettingsWindow.show() }
     @objc func stopRecording() { CaptureCoordinator.shared.recording?.stopOrCancel() }
 

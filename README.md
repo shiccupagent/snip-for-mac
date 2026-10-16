@@ -57,7 +57,8 @@ Every **New** button opens the bar in picture mode; press 🎥 on the bar to rec
 
 **Recordings** save to `~/Movies/Snips`. Everything is saved as you go, with no Save step: **Show File** opens Finder with the file selected, ready to drag into YouTube, Discord or anywhere, without making copies. The video window also has **Copy** (paste the video into Messages, Slack or Mail), Share, and **GIF**, which makes a GIF and copies it.
 
-**Timeline editor** (under every recording): drag across the thumbnails to scrub, then
+**Timeline editor** (under every recording; for older ones use **Edit a Recording…** in the menu bar menu, or
+right-click a video → Open With → Snip): drag across the thumbnails to scrub, then
 - drag the yellow ends of the clip to trim it, or press **I** / **O** to trim to the playhead;
 - **Split** (⌘B) at the playhead and **Delete** a piece to cut out the middle; cut-out parts turn dark;
 - **Space** plays (skipping what you cut), **←/→** step a frame, **⇧←/→** a second, **⌘Z** undoes;

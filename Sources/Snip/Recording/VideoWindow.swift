@@ -47,6 +47,19 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
         controller.player.play()
     }
 
+    /// Opens a saved video in the editor, sized to its picture. A recording's "(no timer)" copy opens
+    /// the recording itself, so its speedrun timer stays in step.
+    static func edit(_ file: URL) {
+        let url = (try? VideoTools.resolve(file.path)) ?? file
+        Task {
+            let track = try? await AVURLAsset(url: url).loadTracks(withMediaType: .video).first
+            let pixels = (try? await track?.load(.naturalSize)) ?? CGSize(width: 1280, height: 720)
+            let scale = NSScreen.main?.backingScaleFactor ?? 2
+            NSApp.activate(ignoringOtherApps: true)
+            open(url: url, pointSize: CGSize(width: pixels.width / scale, height: pixels.height / scale))
+        }
+    }
+
     init(url: URL, pointSize: CGSize) {
         model = VideoModel(url: url)
         player = AVPlayer(url: url)
