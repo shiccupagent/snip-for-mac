@@ -464,16 +464,21 @@ private struct PlayheadLine: View {
                     .fixedSize()
                     .offset(x: min(max(x(hover) - 30, 0), max(width - 64, 0)), y: max(top - 14, 0))
             }
-            VStack(spacing: 0) {
+            // White with a dark outline, so it shows over bright frames and over the yellow handles.
+            VStack(spacing: -1) {
                 Image(systemName: "arrowtriangle.down.fill")
-                    .font(.system(size: 9))
+                    .font(.system(size: 14))
                     .foregroundStyle(.white)
-                    .frame(height: 8)
-                Rectangle().fill(Color.white).frame(width: 2, height: height - 8)
+                    .frame(height: 11)
+                Rectangle()
+                    .fill(Color.white)
+                    .frame(width: 2, height: height - 10)
+                    .padding(.horizontal, 1)
+                    .background(Color.black.opacity(0.7))
             }
-            .shadow(color: .black.opacity(0.6), radius: 1.5)
-            .frame(width: 12)
-            .offset(x: x(playhead.time) - 6, y: top)
+            .shadow(color: .black.opacity(0.7), radius: 1)
+            .frame(width: 16)
+            .offset(x: x(playhead.time) - 8, y: top - 3)
         }
         .frame(width: width, alignment: .topLeading)
     }
