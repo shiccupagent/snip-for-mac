@@ -49,7 +49,10 @@ ScreenCaptureKit. User-facing docs: README.md.
   They compile with the CLT if Prefs/SpeedrunRenderer/VideoTime are stubbed: drive them locally on ffmpeg testsrc clips.
 - `Snip dev-snapshot <video> <out.png> [--edit] [--zoom N] [--width N]` draws the video window invisibly to a PNG: check UI changes by eye.
   `Snip dev-play <video> [--from S] [--seconds N]` plays it invisibly and silently and reports stalls, main-thread
-  hiccups, CPU and memory: check playback smoothness.
+  hiccups, CPU, memory and the longest silence (`SoundMeter` taps the sound): check playback smoothness.
+- Every video window plays `PlaybackItem.make(url)`, never the bare file: AVPlayer goes silent for good at a sound
+  packet stamped as lasting ~2 s (editor renders have these), so files with such holes play through a composition
+  with each hole left empty. Find holes with ffprobe: audio packets whose duration isn't 1024.
 
 ## Repo
 - Public, MIT. No Co-Authored-By trailers. Never commit personal info, keys or certificates.

@@ -45,12 +45,14 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
     private var thumbnailTask: Task<Void, Never>?
 
     static func open(url: URL, pointSize: CGSize) {
-        let controller = VideoWindowController(url: url, pointSize: pointSize)
-        openControllers.append(controller)
-        guard let window = controller.window else { return }
-        WindowTracker.track(window)
-        window.makeKeyAndOrderFront(nil)
-        controller.player.play()
+        Task {
+            let controller = VideoWindowController(url: url, pointSize: pointSize, item: await PlaybackItem.make(url))
+            openControllers.append(controller)
+            guard let window = controller.window else { return }
+            WindowTracker.track(window)
+            window.makeKeyAndOrderFront(nil)
+            controller.player.play()
+        }
     }
 
     /// Opens a saved video in the editor, sized to its picture. A recording's "(no timer)" copy opens
@@ -66,9 +68,10 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    init(url: URL, pointSize: CGSize) {
+    /// `item` comes from `PlaybackItem.make(url)`.
+    init(url: URL, pointSize: CGSize, item: AVPlayerItem) {
         model = VideoModel(url: url)
-        player = AVPlayer(url: url)
+        player = AVPlayer(playerItem: item)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -160,15 +163,19 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
 
     /// Development aid (`Snip dev-play <video> [--from S] [--seconds N]`): plays the video in this window,
     /// invisible and silent (the saved volume is left alone), and reports how smoothly it went: stalls,
-    /// main-thread hiccups (when the window's own work held the app up), CPU and memory.
+    /// main-thread hiccups (when the window's own work held the app up), CPU, memory and the longest
+    /// silence (a player that lost its sound goes silent far longer than the video's pauses).
     static func playTest(url: URL, from: Double, seconds: Double) async -> String {
-        let controller = VideoWindowController(url: url, pointSize: CGSize(width: 1280, height: 720))
+        let controller = VideoWindowController(url: url, pointSize: CGSize(width: 1280, height: 720),
+                                               item: await PlaybackItem.make(url))
         guard let window = controller.window else { return "no window" }
         window.alphaValue = 0
         window.ignoresMouseEvents = true
         window.orderFrontRegardless()
         controller.player.volume = 0
         defer { window.close() }
+        let meter = SoundMeter()
+        if let item = controller.player.currentItem { await meter.attach(to: item) }
         try? await Task.sleep(for: .seconds(2))
         await controller.player.seek(to: CMTime(seconds: from, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         controller.player.play()
@@ -202,6 +209,9 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
         report.append(String(format: "played %.1f s in %.1f s; stalls %d; main-thread hiccups over 50 ms %d (worst %.0f ms); memory %d MB",
                              controller.player.currentTime().seconds - from, Date().timeIntervalSince(start), stalls, hiccups,
                              worst * 1000, Self.memoryMB()))
+        let silence = meter.longestSilence()
+        report.append(String(format: "longest silence %.1f s from %@%@", silence.length, VideoTime.format(silence.start),
+                             controller.player.currentItem?.asset is AVComposition ? " (sound holes in the file played as silence)" : ""))
         return report.joined(separator: "\n")
     }
 
@@ -224,7 +234,8 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
     /// PNG without ever showing it, optionally with a sample edit and zoomed in, so the timeline can be
     /// checked by eye.
     static func snapshot(url: URL, to out: URL, sampleEdit: Bool, zoom: Double? = nil, width: Double = 1100) async -> Bool {
-        let controller = VideoWindowController(url: url, pointSize: CGSize(width: 1100, height: 520))
+        let controller = VideoWindowController(url: url, pointSize: CGSize(width: 1100, height: 520),
+                                               item: await PlaybackItem.make(url))
         guard let window = controller.window else { return false }
         window.alphaValue = 0
         window.ignoresMouseEvents = true
@@ -477,7 +488,7 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
                     window?.close()
                     return
                 }
-                player.replaceCurrentItem(with: AVPlayerItem(url: model.url))
+                player.replaceCurrentItem(with: await PlaybackItem.make(model.url))
                 await loadTimeline()
                 flash(edit.isCut ? "Edit saved. The old version is in the Trash." : "Splits saved")
             } catch {
@@ -543,7 +554,7 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
                 try await SpeedrunRenderer.rerender(logURL: logURL, to: model.url) { [weak self] fraction in
                     self?.model.status = "Redrawing the timer… \(Int(fraction * 100))%"
                 }
-                player.replaceCurrentItem(with: AVPlayerItem(url: model.url))
+                player.replaceCurrentItem(with: await PlaybackItem.make(model.url))
                 await player.seek(to: at, toleranceBefore: .zero, toleranceAfter: .zero)
                 await loadTimeline()
                 model.busy = false
