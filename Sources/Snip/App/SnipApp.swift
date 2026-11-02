@@ -20,6 +20,21 @@ enum SnipMain {
             }
             RunLoop.main.run()
         }
+        if command == "dev-play", CommandLine.arguments.count >= 3 {
+            NSApplication.shared.setActivationPolicy(.accessory)
+            NSApplication.shared.finishLaunching()
+            Prefs.register()
+            let args = CommandLine.arguments
+            func number(_ flag: String) -> Double? {
+                args.firstIndex(of: flag).flatMap { args.indices.contains($0 + 1) ? Double(args[$0 + 1]) : nil }
+            }
+            Task { @MainActor in
+                print(await VideoWindowController.playTest(url: URL(fileURLWithPath: args[2]), from: number("--from") ?? 0,
+                                                           seconds: number("--seconds") ?? 30))
+                exit(0)
+            }
+            RunLoop.main.run()
+        }
         if command == "dev-snapshot", CommandLine.arguments.count >= 4 {
             NSApplication.shared.setActivationPolicy(.accessory)
             NSApplication.shared.finishLaunching()

@@ -158,6 +158,68 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Development aid (`Snip dev-play <video> [--from S] [--seconds N]`): plays the video in this window,
+    /// invisible and silent (the saved volume is left alone), and reports how smoothly it went: stalls,
+    /// main-thread hiccups (when the window's own work held the app up), CPU and memory.
+    static func playTest(url: URL, from: Double, seconds: Double) async -> String {
+        let controller = VideoWindowController(url: url, pointSize: CGSize(width: 1280, height: 720))
+        guard let window = controller.window else { return "no window" }
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.orderFrontRegardless()
+        controller.player.volume = 0
+        defer { window.close() }
+        try? await Task.sleep(for: .seconds(2))
+        await controller.player.seek(to: CMTime(seconds: from, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        controller.player.play()
+        var report: [String] = []
+        var stalls = 0, hiccups = 0, worst = 0.0
+        var status = controller.player.timeControlStatus
+        let start = Date()
+        var last = start, lastSample = start, lastCPU = Self.cpuSeconds()
+        while Date().timeIntervalSince(start) < seconds {
+            try? await Task.sleep(for: .milliseconds(20))
+            let now = Date()
+            let late = now.timeIntervalSince(last) - 0.02
+            last = now
+            if late > 0.05 { hiccups += 1 }
+            worst = max(worst, late)
+            let s = controller.player.timeControlStatus
+            if s != status, s == .waitingToPlayAtSpecifiedRate, now.timeIntervalSince(start) > 1 {
+                stalls += 1
+                report.append(String(format: "stall at %.2f s", controller.player.currentTime().seconds))
+            }
+            status = s
+            if now.timeIntervalSince(lastSample) >= 10 {
+                let cpu = Self.cpuSeconds()
+                report.append(String(format: "at %.0f s: cpu %.0f%%, memory %d MB, worst hiccup so far %.0f ms",
+                                     controller.player.currentTime().seconds, (cpu - lastCPU) / now.timeIntervalSince(lastSample) * 100,
+                                     Self.memoryMB(), worst * 1000))
+                lastCPU = cpu
+                lastSample = now
+            }
+        }
+        report.append(String(format: "played %.1f s in %.1f s; stalls %d; main-thread hiccups over 50 ms %d (worst %.0f ms); memory %d MB",
+                             controller.player.currentTime().seconds - from, Date().timeIntervalSince(start), stalls, hiccups,
+                             worst * 1000, Self.memoryMB()))
+        return report.joined(separator: "\n")
+    }
+
+    private static func cpuSeconds() -> Double {
+        var usage = rusage()
+        getrusage(RUSAGE_SELF, &usage)
+        return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1e6
+    }
+
+    private static func memoryMB() -> Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return result == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
+    }
+
     /// Development aid (`Snip dev-snapshot <video> <out.png> [--edit] [--zoom N] [--width N]`): draws this window to a
     /// PNG without ever showing it, optionally with a sample edit and zoomed in, so the timeline can be
     /// checked by eye.
