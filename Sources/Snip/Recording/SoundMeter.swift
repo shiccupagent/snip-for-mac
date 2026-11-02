@@ -30,9 +30,16 @@ final class SoundMeter: @unchecked Sendable {
                 Unmanaged<SoundMeter>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
                     .record(time: range.start.seconds, length: range.duration.seconds, peak: peak)
             })
+        // The macOS 26 SDK hands the tap back managed; earlier SDKs (CI's) hand it back unmanaged.
+        #if compiler(>=6.2)
         var tap: MTAudioProcessingTap?
         guard MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PostEffects, &tap) == noErr
         else { return }
+        #else
+        var created: Unmanaged<MTAudioProcessingTap>?
+        guard MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PostEffects, &created) == noErr,
+              let tap = created?.takeRetainedValue() else { return }
+        #endif
         let input = AVMutableAudioMixInputParameters(track: track)
         input.audioTapProcessor = tap
         let mix = AVMutableAudioMix()
