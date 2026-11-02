@@ -105,6 +105,7 @@ enum Prefs {
         static let speedrunTimer = "speedrunTimer"
         static let speedrunOnScreen = "speedrunOnScreen"
         static let speedrunOpacity = "speedrunOpacity"
+        static let videoVolume = "videoVolume"
         static let splitsPath = "speedrunSplitsPath"
         static func speedrunShortcut(_ action: SpeedrunAction) -> String { "speedrunKey.\(action.rawValue)" }
     }
@@ -133,6 +134,7 @@ enum Prefs {
             Key.speedrunTimer: false,
             Key.speedrunOnScreen: true,
             Key.speedrunOpacity: 1.0,
+            Key.videoVolume: 1.0,
         ])
     }
 
@@ -189,6 +191,12 @@ enum Prefs {
     static var speedrunOpacity: Double {
         get { min(max(defaults.double(forKey: Key.speedrunOpacity), 0.2), 1) }
         set { defaults.set(min(max(newValue, 0.2), 1), forKey: Key.speedrunOpacity) }
+    }
+
+    /// Where the video window's volume slider sits (0–1), kept for the next video.
+    static var videoVolume: Double {
+        get { min(max(defaults.double(forKey: Key.videoVolume), 0), 1) }
+        set { defaults.set(min(max(newValue, 0), 1), forKey: Key.videoVolume) }
     }
 
     static var speedrunOnScreen: Bool {

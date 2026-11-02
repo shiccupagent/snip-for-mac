@@ -62,6 +62,8 @@ right-click a video → Open With → Snip): drag across the thumbnails to scrub
 - drag the yellow ends of the clip to trim it, or press **I** / **O** to trim to the playhead;
 - **Split** (⌘B) at the playhead and **Delete** a piece to cut out the middle; cut-out parts turn dark;
 - **Space** plays (skipping what you cut), **←/→** step a frame, **⇧←/→** a second, **⌘Z** undoes;
+- the **volume slider** next to the speaker (or **↑/↓**) turns the sound up and down, and is remembered for the next
+  video; the speaker button mutes;
 - **zoom in** for frame-exact cuts: pinch on the trackpad or hold ⌘ and scroll over the timeline (it zooms around your
   pointer), scroll sideways to move along, **⌘=** / **⌘−** / **⌘0** zoom in, out and back to the whole video, or use the
   zoom slider in the bottom corner;

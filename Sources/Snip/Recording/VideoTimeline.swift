@@ -213,6 +213,8 @@ final class PlayheadModel: ObservableObject {
     @Published var time: Double = 0
     @Published var playing = false
     @Published var muted = false
+    /// The volume slider's position, 0–1 (see `VideoWindowController.setVolume`).
+    @Published var volume: Double = 1
     /// Where the pointer is over the strip (nil: not over it).
     @Published var hover: Double?
 }
@@ -228,6 +230,7 @@ struct VideoTimelineView: View {
     let onSeek: (Double) -> Void
     let onPlayPause: () -> Void
     let onMute: () -> Void
+    let onVolume: (Double) -> Void
     let onSave: () -> Void
 
     /// Shared with the window, which handles scrolling and pinching over the strip.
@@ -278,7 +281,7 @@ struct VideoTimelineView: View {
             PlayButton(playhead: playhead, action: onPlayPause)
             TimeReadout(playhead: playhead, edit: model.edit)
                 .padding(.leading, 4)
-            MuteButton(playhead: playhead, action: onMute)
+            VolumeControl(playhead: playhead, onMute: onMute, onVolume: onVolume)
 
             Spacer(minLength: 8)
 
@@ -330,7 +333,8 @@ struct VideoTimelineView: View {
 
     private func zoomStep(_ factor: Double) { setZoom(model.viewport.zoom * factor) }
 
-    /// Keyboard: Space play, ←/→ a frame (⇧ a second), ⌘B split, Delete cut, I/O trim, ⌘Z undo, ⌘= ⌘− ⌘0 zoom.
+    /// Keyboard: Space play, ←/→ a frame (⇧ a second), ↑/↓ volume, ⌘B split, Delete cut, I/O trim, ⌘Z undo,
+    /// ⌘= ⌘− ⌘0 zoom.
     private var shortcuts: some View {
         ZStack {
             Button("") { onPlayPause() }.keyboardShortcut(.space, modifiers: [])
@@ -338,6 +342,8 @@ struct VideoTimelineView: View {
             Button("") { step(1 / 30) }.keyboardShortcut(.rightArrow, modifiers: [])
             Button("") { step(-1) }.keyboardShortcut(.leftArrow, modifiers: [.shift])
             Button("") { step(1) }.keyboardShortcut(.rightArrow, modifiers: [.shift])
+            Button("") { onVolume(playhead.volume + 0.1) }.keyboardShortcut(.upArrow, modifiers: [])
+            Button("") { onVolume(playhead.volume - 0.1) }.keyboardShortcut(.downArrow, modifiers: [])
             Button("") { model.split(at: playhead.time) }.keyboardShortcut("b")
             Button("") { model.removeSelected(or: playhead.time) }.keyboardShortcut(.delete, modifiers: [])
             Button("") { model.trim(.start, at: playhead.time) }.keyboardShortcut("i", modifiers: [])
@@ -663,12 +669,28 @@ private struct PlayButton: View {
     }
 }
 
-private struct MuteButton: View {
+/// Mute button and volume slider. The speaker shows the level; dragging the slider unmutes.
+private struct VolumeControl: View {
     @ObservedObject var playhead: PlayheadModel
-    let action: () -> Void
+    let onMute: () -> Void
+    let onVolume: (Double) -> Void
+
+    private var silent: Bool { playhead.muted || playhead.volume <= 0 }
+
+    private var icon: String {
+        if silent { return "speaker.slash.fill" }
+        return playhead.volume < 0.34 ? "speaker.wave.1.fill" : playhead.volume < 0.67 ? "speaker.wave.2.fill" : "speaker.wave.3.fill"
+    }
 
     var body: some View {
-        IconButton(icon: playhead.muted ? "speaker.slash.fill" : "speaker.wave.2.fill", help: playhead.muted ? "Unmute" : "Mute", action: action)
+        HStack(spacing: 2) {
+            IconButton(icon: icon, help: silent ? "Unmute" : "Mute", action: onMute)
+                .frame(width: 34)
+            Slider(value: Binding(get: { playhead.muted ? 0 : playhead.volume }, set: onVolume), in: 0...1)
+                .controlSize(.small)
+                .frame(width: 84)
+                .help("Volume: \(silent ? 0 : Int((playhead.volume * 100).rounded()))% (↑/↓)")
+        }
     }
 }
 

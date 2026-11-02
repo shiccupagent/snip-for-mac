@@ -47,7 +47,7 @@ ScreenCaptureKit. User-facing docs: README.md.
   for what's in view once zooming pauses (cache capped at 600, nearest one stands in meanwhile).
 - `AI/VideoTools` backs `Snip video …` (VideoCLI) and `Snip mcp` (MCPServer, stdio JSON-RPC). Guide: docs/AI-EDITING.md.
   They compile with the CLT if Prefs/SpeedrunRenderer/VideoTime are stubbed: drive them locally on ffmpeg testsrc clips.
-- `Snip dev-snapshot <video> <out.png> [--edit] [--zoom N]` draws the video window invisibly to a PNG: check UI changes by eye.
+- `Snip dev-snapshot <video> <out.png> [--edit] [--zoom N] [--width N]` draws the video window invisibly to a PNG: check UI changes by eye.
 
 ## Repo
 - Public, MIT. No Co-Authored-By trailers. Never commit personal info, keys or certificates.

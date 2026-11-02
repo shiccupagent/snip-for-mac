@@ -79,7 +79,7 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
-        window.minSize = NSSize(width: 680, height: 380)
+        window.minSize = NSSize(width: 800, height: 380)
 
         let playerView = PlainPlayerView()
         playerView.player = player
@@ -107,10 +107,12 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
             onSeek: { [weak self] t in self?.seek(t) },
             onPlayPause: { [weak self] in self?.playPause() },
             onMute: { [weak self] in self?.toggleMute() },
+            onVolume: { [weak self] v in self?.setVolume(v) },
             onSave: { [weak self] in self?.saveEdit() }
         ))
 
         timelineHost = timelineView
+        setVolume(Prefs.videoVolume)
 
         let container = NSView()
         for v in [playerView, bar, timelineView] as [NSView] {
@@ -132,9 +134,10 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
         window.contentView = container
 
         let visible = NSScreen.underMouse.visibleFrame
-        let width = min(max(pointSize.width, 700), visible.width * 0.85)
+        let width = min(max(pointSize.width, 820), visible.width * 0.85)
         let height = min(max(pointSize.height + 52 + 120, 520), visible.height * 0.85)
-        window.minSize = NSSize(width: 680, height: 480)
+        // Wide enough for play, time, volume and every edit button in one row.
+        window.minSize = NSSize(width: 800, height: 480)
         window.setContentSize(NSSize(width: width, height: height))
         window.center()
 
@@ -155,15 +158,15 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// Development aid (`Snip dev-snapshot <video> <out.png> [--edit] [--zoom N]`): draws this window to a
+    /// Development aid (`Snip dev-snapshot <video> <out.png> [--edit] [--zoom N] [--width N]`): draws this window to a
     /// PNG without ever showing it, optionally with a sample edit and zoomed in, so the timeline can be
     /// checked by eye.
-    static func snapshot(url: URL, to out: URL, sampleEdit: Bool, zoom: Double? = nil) async -> Bool {
+    static func snapshot(url: URL, to out: URL, sampleEdit: Bool, zoom: Double? = nil, width: Double = 1100) async -> Bool {
         let controller = VideoWindowController(url: url, pointSize: CGSize(width: 1100, height: 520))
         guard let window = controller.window else { return false }
         window.alphaValue = 0
         window.ignoresMouseEvents = true
-        window.setContentSize(NSSize(width: 1100, height: 700))
+        window.setContentSize(NSSize(width: width, height: 700))
         window.orderFrontRegardless()
         try? await Task.sleep(for: .seconds(4))
         if sampleEdit {
@@ -342,8 +345,26 @@ final class VideoWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func toggleMute() {
+        // With the slider all the way down, "unmute" means bring it back up to half.
+        if playhead.volume <= 0 {
+            setVolume(0.5)
+            return
+        }
         player.isMuted.toggle()
         playhead.muted = player.isMuted
+    }
+
+    /// The volume slider (0–1). It is mapped to the player's gain squared, so equal slider steps
+    /// sound like equal steps; a linear gain does nearly everything in the bottom quarter.
+    private func setVolume(_ value: Double) {
+        let v = min(max(value, 0), 1)
+        player.volume = Float(v * v)
+        playhead.volume = v
+        Prefs.videoVolume = v
+        if v > 0, player.isMuted {
+            player.isMuted = false
+            playhead.muted = false
+        }
     }
 
     private func playPause() {
@@ -591,11 +612,12 @@ private struct VideoTimelineHost: View {
     let onSeek: (Double) -> Void
     let onPlayPause: () -> Void
     let onMute: () -> Void
+    let onVolume: (Double) -> Void
     let onSave: () -> Void
 
     var body: some View {
         VideoTimelineView(model: timeline, playhead: playhead, busy: model.busy, onSeek: onSeek,
-                          onPlayPause: onPlayPause, onMute: onMute, onSave: onSave)
+                          onPlayPause: onPlayPause, onMute: onMute, onVolume: onVolume, onSave: onSave)
     }
 }
 
