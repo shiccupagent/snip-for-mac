@@ -35,6 +35,18 @@ enum SnipMain {
             }
             RunLoop.main.run()
         }
+        if command == "dev-bar", CommandLine.arguments.count >= 3 {
+            NSApplication.shared.setActivationPolicy(.accessory)
+            NSApplication.shared.finishLaunching()
+            Prefs.register()
+            let args = CommandLine.arguments
+            Task { @MainActor in
+                let ok = await CaptureBar.snapshot(to: URL(fileURLWithPath: args[2]), kind: args.contains("--record") ? .record : .snip,
+                                                   choosingDelay: args.contains("--delay"))
+                exit(ok ? 0 : 1)
+            }
+            RunLoop.main.run()
+        }
         if command == "dev-snapshot", CommandLine.arguments.count >= 4 {
             NSApplication.shared.setActivationPolicy(.accessory)
             NSApplication.shared.finishLaunching()

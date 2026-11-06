@@ -9,7 +9,7 @@ Universal app for Apple Silicon and Intel Macs, macOS 14 or later.
 Press **⌥⇧S**, drag over part of the screen, and it's already on your clipboard and open in an editor that's easy to draw on.
 Press **⌥⇧R** to record the screen instead. If you've used the Snipping Tool on Windows, you'll feel at home.
 
-- **Snip** a rectangle, a freeform shape, a window or the full screen, with an optional delay.
+- **Snip** a rectangle, a freeform shape, a window or the full screen, with an optional delay: pick it before you start, or with ⏱ on the bar at the top of the screen (3, 5 or 10 seconds, then the screen is snipped fresh).
 - **Mark up** with pen, highlighter, arrows, shapes, text, redact (pixelate) and crop. Every edit is copied automatically.
 - **Copy text** out of any screenshot (on-device text recognition).
 - **Record** an area with computer sound and microphone, then copy the video, share it, or turn it into a GIF in one click.

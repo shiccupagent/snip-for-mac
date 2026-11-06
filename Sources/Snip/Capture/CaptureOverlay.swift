@@ -80,12 +80,16 @@ final class CaptureSession {
     private var views: [OverlayView] = []
     private var cancellable: AnyCancellable?
     private let completion: (CaptureResult?) -> Void
+    private let onDelay: (Int) -> Void
     private var done = false
 
-    init(state: OverlayState, shots: [DisplayShot], windowInfos: [WindowInfo], completion: @escaping (CaptureResult?) -> Void) {
+    /// `onDelay(seconds)`: the delay button was used; snip again once that many seconds have passed.
+    init(state: OverlayState, shots: [DisplayShot], windowInfos: [WindowInfo],
+         onDelay: @escaping (Int) -> Void, completion: @escaping (CaptureResult?) -> Void) {
         self.state = state
         self.shots = shots
         self.windowInfos = windowInfos
+        self.onDelay = onDelay
         self.completion = completion
     }
 
@@ -102,12 +106,20 @@ final class CaptureSession {
         }
         let keyIndex = shots.firstIndex { NSMouseInRect(mouse, $0.screen.frame, false) } ?? 0
 
-        let bar = FirstMouseHostingView(rootView: CaptureBar(state: state, onClose: { [weak self] in self?.cancel("close button") }))
-        let size = bar.fittingSize
+        let bar = FirstMouseHostingView(rootView: CaptureBar(
+            state: state,
+            onDelay: { [weak self] seconds in self?.delay(seconds) },
+            onClose: { [weak self] in self?.cancel("close button") }
+        ))
         let host = views[keyIndex]
         let top = max(shots[keyIndex].screen.safeAreaInsets.top, 24)
-        bar.frame = NSRect(x: (host.bounds.width - size.width) / 2, y: top, width: size.width, height: size.height)
+        // Centred by constraints, so the bar stays centred as the delay choices open beside the timer.
+        bar.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(bar)
+        NSLayoutConstraint.activate([
+            bar.centerXAnchor.constraint(equalTo: host.centerXAnchor),
+            bar.topAnchor.constraint(equalTo: host.topAnchor, constant: top),
+        ])
 
         cancellable = state.objectWillChange.sink { [weak self] _ in
             Task { @MainActor in self?.views.forEach { $0.modeChanged() } }
@@ -131,6 +143,15 @@ final class CaptureSession {
         let result = CaptureResult(kind: state.kind, mode: state.mode, shot: shot, region: region)
         teardown()
         completion(result)
+    }
+
+    /// Closes the overlay so the screen can change (open a menu, hover a tooltip) before snipping again.
+    func delay(_ seconds: Int) {
+        captureLog.notice("overlay closed for a \(seconds) s delay")
+        guard !done else { return }
+        done = true
+        teardown()
+        onDelay(seconds)
     }
 
     func cancel(_ reason: String = "unknown") {
@@ -386,10 +407,21 @@ final class OverlayView: NSView {
 }
 
 /// The bar at the top of the screen while snipping, laid out like Snipping Tool's:
-/// snip/record toggle, then Rectangle · Freeform · Window · Full screen, then close.
+/// snip/record toggle, then Rectangle · Freeform · Window · Full screen, the delay, then close.
 struct CaptureBar: View {
     @ObservedObject var state: OverlayState
+    let onDelay: (Int) -> Void
     let onClose: () -> Void
+
+    @State private var choosingDelay: Bool
+    @AppStorage(Prefs.Key.recordDelay) private var recordDelay = 3
+
+    init(state: OverlayState, choosingDelay: Bool = false, onDelay: @escaping (Int) -> Void, onClose: @escaping () -> Void) {
+        self.state = state
+        _choosingDelay = State(initialValue: choosingDelay)
+        self.onDelay = onDelay
+        self.onClose = onClose
+    }
 
     var body: some View {
         HStack(spacing: 4) {
@@ -409,6 +441,10 @@ struct CaptureBar: View {
 
             Divider().frame(height: 22).padding(.horizontal, 4)
 
+            delay
+
+            Divider().frame(height: 22).padding(.horizontal, 4)
+
             IconButton(icon: "xmark", help: "Cancel (Esc)", action: onClose)
         }
         .padding(6)
@@ -416,5 +452,46 @@ struct CaptureBar: View {
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.12)))
         .shadow(color: .black.opacity(0.3), radius: 12, y: 4)
         .padding(16)
+    }
+
+    /// Buttons, not a menu: a menu would open underneath this screen-saver-level overlay.
+    @ViewBuilder private var delay: some View {
+        if state.kind == .snip {
+            IconButton(icon: "timer", help: "Snip after a delay", selected: choosingDelay) { choosingDelay.toggle() }
+            if choosingDelay {
+                ForEach([3, 5, 10], id: \.self) { seconds in
+                    IconButton(icon: "\(seconds).circle", help: "Snip in \(seconds) seconds") { onDelay(seconds) }
+                }
+            }
+        } else {
+            // A recording's delay is the countdown after Start, the same setting as on the record bar.
+            IconButton(icon: "timer", help: "How long after you press Start the recording begins (click to change)",
+                       label: recordDelay == 0 ? "Now" : "\(recordDelay)s", selected: recordDelay > 0) {
+                let choices = Prefs.recordDelayChoices
+                recordDelay = choices[((choices.firstIndex(of: recordDelay) ?? 0) + 1) % choices.count]
+            }
+        }
+    }
+}
+
+extension CaptureBar {
+    /// Development aid (`Snip dev-bar <out.png> [--record] [--delay]`): draws the bar to a PNG without
+    /// showing it, as for snipping or recording and with the delay choices open, to check it by eye.
+    @MainActor
+    static func snapshot(to out: URL, kind: CaptureKind, choosingDelay: Bool) async -> Bool {
+        let view = NSHostingView(rootView: CaptureBar(state: OverlayState(kind: kind, mode: .rect), choosingDelay: choosingDelay,
+                                                      onDelay: { _ in }, onClose: {}))
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: view.fittingSize), styleMask: .borderless,
+                              backing: .buffered, defer: false)
+        window.contentView = view
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.orderFrontRegardless()
+        defer { window.close() }
+        try? await Task.sleep(for: .milliseconds(600))
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return false }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        guard let png = rep.representation(using: .png, properties: [:]) else { return false }
+        return (try? png.write(to: out)) != nil
     }
 }

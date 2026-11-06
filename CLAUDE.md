@@ -48,6 +48,7 @@ ScreenCaptureKit. User-facing docs: README.md.
 - `AI/VideoTools` backs `Snip video …` (VideoCLI) and `Snip mcp` (MCPServer, stdio JSON-RPC). Guide: docs/AI-EDITING.md.
   They compile with the CLT if Prefs/SpeedrunRenderer/VideoTime are stubbed: drive them locally on ffmpeg testsrc clips.
 - `Snip dev-snapshot <video> <out.png> [--edit] [--zoom N] [--width N]` draws the video window invisibly to a PNG: check UI changes by eye.
+  `Snip dev-bar <out.png> [--record] [--delay]` does the same for the snipping bar (delay choices open with --delay).
   `Snip dev-play <video> [--from S] [--seconds N]` plays it invisibly and silently and reports stalls, main-thread
   hiccups, CPU, memory and the longest silence (`SoundMeter` taps the sound): check playback smoothness.
 - Every video window plays `PlaybackItem.make(url)`, never the bare file: AVPlayer goes silent for good at a sound

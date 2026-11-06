@@ -51,7 +51,9 @@ final class CaptureCoordinator {
                 let shots = try await ScreenCapture.freezeDisplays()
                 let windows = ScreenCapture.visibleWindows()
                 let state = OverlayState(kind: kind, mode: Prefs.snipMode)
-                let session = CaptureSession(state: state, shots: shots, windowInfos: windows) { [weak self] result in
+                let session = CaptureSession(state: state, shots: shots, windowInfos: windows, onDelay: { [weak self] seconds in
+                    self?.snipAgain(after: seconds, mode: state.mode)
+                }) { [weak self] result in
                     self?.sessionEnded(result)
                 }
                 self.session = session
@@ -60,6 +62,16 @@ final class CaptureCoordinator {
                 restoreAppWindows()
                 Permission.showAlert(error: error)
             }
+        }
+    }
+
+    /// The overlay's delay button: count down with Snip's windows still hidden, then snip a fresh screen.
+    private func snipAgain(after seconds: Int, mode: SnipMode) {
+        session = nil
+        Prefs.snipMode = mode
+        countdown = DelayCountdown.show(seconds: seconds) { [weak self] in
+            self?.countdown = nil
+            self?.capture(.snip, after: 0.15)
         }
     }
 
